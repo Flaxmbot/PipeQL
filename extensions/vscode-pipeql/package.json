@@ -2,7 +2,7 @@
   "name": "vscode-pipeql",
   "displayName": "PipeQL",
   "description": "PipeQL language support - pipelined & injection-safe polyglot query language",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "publisher": "pipeql",
   "license": "MIT",
   "engines": {

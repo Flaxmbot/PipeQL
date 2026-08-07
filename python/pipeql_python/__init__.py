@@ -1,4 +1,4 @@
-"""PipeQL Python SDK (v1.1.2).
+"""PipeQL Python SDK (v1.1.3).
 
 Re-exports the native ``pipeql_python`` extension functions and the
 zero-boilerplate ``driver`` adapters.

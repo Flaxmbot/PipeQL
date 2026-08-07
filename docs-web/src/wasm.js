@@ -1,11 +1,13 @@
 let wasmExports = null;
 
+const dynamicImport = new Function('specifier', 'return import(specifier)');
+
 export async function initWasm() {
   if (wasmExports) return wasmExports;
 
   const [wasmBinary, jsModule] = await Promise.all([
     fetch('/wasm/pipeql_wasm_bg.wasm').then(r => r.arrayBuffer()),
-    import(/* @vite-ignore */ '/wasm/pipeql_wasm.js'),
+    dynamicImport('/wasm/pipeql_wasm.js'),
   ]);
 
   const wasmModule = await WebAssembly.compile(wasmBinary);

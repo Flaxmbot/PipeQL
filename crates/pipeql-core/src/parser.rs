@@ -28,6 +28,61 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut matrix = vec![vec![0; b_chars.len() + 1]; a_chars.len() + 1];
+
+    for i in 0..=a_chars.len() {
+        matrix[i][0] = i;
+    }
+    for j in 0..=b_chars.len() {
+        matrix[0][j] = j;
+    }
+
+    for i in 1..=a_chars.len() {
+        for j in 1..=b_chars.len() {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            matrix[i][j] = (matrix[i - 1][j] + 1)
+                .min(matrix[i][j - 1] + 1)
+                .min(matrix[i - 1][j - 1] + cost);
+        }
+    }
+    matrix[a_chars.len()][b_chars.len()]
+}
+
+pub fn suggest_keyword(input: &str) -> Option<&'static str> {
+    let candidates = [
+        "from", "into", "table", "insert", "upsert", "update", "delete",
+        "filter", "select", "derive", "join", "group", "sort", "take", "skip",
+        "conflict", "do", "union", "all", "left", "right", "full", "inner", "as", "on",
+        "and", "or", "not", "in", "is", "null", "true", "false", "asc", "desc",
+    ];
+    let lower = input.to_lowercase();
+    let mut best: Option<(&'static str, usize)> = None;
+
+    for &cand in &candidates {
+        let dist = levenshtein_distance(&lower, cand);
+        if dist <= 2 && dist < cand.len() {
+            if let Some((best_cand, best_dist)) = best {
+                if dist < best_dist {
+                    best = Some((cand, dist));
+                } else if dist == best_dist {
+                    // Tie breaker: prefer candidate sharing the same starting character
+                    if cand.chars().next() == lower.chars().next()
+                        && best_cand.chars().next() != lower.chars().next()
+                    {
+                        best = Some((cand, dist));
+                    }
+                }
+            } else {
+                best = Some((cand, dist));
+            }
+        }
+    }
+    best.map(|(c, _)| c)
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -255,6 +310,18 @@ impl Parser {
                     "A PipeQL statement starts with `from`, `into`, or `table`".to_string(),
                 ),
             }]),
+            TokenKind::Ident(name) => {
+                let hint = if let Some(suggested) = suggest_keyword(name) {
+                    format!("Did you mean `{suggested}`?")
+                } else {
+                    "Statements begin with `from <table>`, `into <table>`, or `table <name>`".to_string()
+                };
+                Err(vec![ParseError {
+                    message: format!("Unknown statement keyword '{name}'"),
+                    span: self.peek_token().span,
+                    suggestion: Some(hint),
+                }])
+            }
             _ => Err(vec![ParseError {
                 message: format!(
                     "Expected 'from', 'into', or 'table' to start a statement, found '{}'",
@@ -495,13 +562,18 @@ impl Parser {
                 "string" | "text" => Ok(ColumnType::String),
                 "bool" | "boolean" => Ok(ColumnType::Bool),
                 "timestamp" | "datetime" => Ok(ColumnType::Timestamp),
-                other => Err(ParseError {
-                    message: format!("Unknown column type '{other}'"),
-                    span: token.span,
-                    suggestion: Some(
-                        "Supported types: int, float, string, bool, timestamp".to_string(),
-                    ),
-                }),
+                other => {
+                    let hint = if let Some(suggested) = suggest_keyword(other) {
+                        format!("Did you mean `{suggested}`? Supported types: int, float, string, bool, timestamp")
+                    } else {
+                        "Supported types: int, float, string, bool, timestamp".to_string()
+                    };
+                    Err(ParseError {
+                        message: format!("Unknown column type '{other}'"),
+                        span: token.span,
+                        suggestion: Some(hint),
+                    })
+                }
             },
             other => Err(ParseError {
                 message: format!("Expected column type after column name, found '{other}'"),
@@ -568,6 +640,18 @@ impl Parser {
                 span: self.peek_token().span,
                 suggestion: Some("Expected a pipeline step such as `filter`, `select`, `derive`, or `take` after `|`".to_string()),
             }]),
+            TokenKind::Ident(name) => {
+                let hint = if let Some(suggested) = suggest_keyword(name) {
+                    format!("Did you mean `{suggested}`?")
+                } else {
+                    "Supported steps: filter, select, derive, join, group, sort, take, skip, update, delete".to_string()
+                };
+                Err(vec![ParseError {
+                    message: format!("Unknown pipeline step '{name}'"),
+                    span: self.peek_token().span,
+                    suggestion: Some(hint),
+                }])
+            }
             _ => Err(vec![ParseError {
                 message: format!("Expected pipeline step, found '{}'", self.peek()),
                 span: self.peek_token().span,
