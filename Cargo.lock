@@ -699,7 +699,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeql"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "pipeql-core",
  "pyo3",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-cffi"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "pipeql-core",
  "serde_json",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-cli"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "clap",
  "pipeql-core",
@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-core"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "criterion",
  "serde",
@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-lsp"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "pipeql-core",
  "serde",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-wasm"
-version = "1.1.4"
+version = "1.1.5"
 dependencies = [
  "js-sys",
  "pipeql-core",

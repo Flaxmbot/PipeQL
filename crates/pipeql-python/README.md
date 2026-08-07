@@ -77,7 +77,7 @@ cargo install pipeql-cli          # CLI tool
 ```toml
 # Cargo.toml
 [dependencies]
-pipeql-core = "1.1.4"
+pipeql-core = "1.1.5"
 ```
 
 ### JavaScript / TypeScript
@@ -112,7 +112,7 @@ sudo cp target/release/libpipeql_cffi.dylib /usr/local/lib/
 go get github.com/Flaxmbot/PipeQL/go@latest
 
 #    Or pin a specific release:
-#    go get github.com/Flaxmbot/PipeQL/go@v1.1.4
+#    go get github.com/Flaxmbot/PipeQL/go@v1.1.5
 ```
 
 > If you see `go.mod file not found` you are outside a Go module — run `go mod init <yourmodule>` first, or run the `go get` from a project that already has a `go.mod`.
