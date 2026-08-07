@@ -9,7 +9,7 @@ export async function initWasm() {
   ]);
 
   const wasmModule = await WebAssembly.compile(wasmBinary);
-  jsModule.initSync(wasmModule);
+  jsModule.initSync({ module: wasmModule });
   wasmExports = jsModule;
   return wasmExports;
 }
