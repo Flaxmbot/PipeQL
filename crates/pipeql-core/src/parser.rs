@@ -629,6 +629,10 @@ impl Parser {
             TokenKind::Select => self.parse_select(),
             TokenKind::Derive => self.parse_derive(),
             TokenKind::Join => self.parse_join(),
+            // SQL-style prefix join types: `left join t on ...`
+            TokenKind::Left | TokenKind::Right | TokenKind::Full | TokenKind::Inner => {
+                self.parse_join_with_prefix()
+            }
             TokenKind::Group => self.parse_group(),
             TokenKind::Sort => self.parse_sort(),
             TokenKind::Take => self.parse_take(),
@@ -644,7 +648,7 @@ impl Parser {
                 let hint = if let Some(suggested) = suggest_keyword(name) {
                     format!("Did you mean `{suggested}`?")
                 } else {
-                    "Supported steps: filter, select, derive, join, group, sort, take, skip, update, delete".to_string()
+                    "Supported steps: filter, select, derive, join (or left/right/full join), group, sort, take, skip, update, delete".to_string()
                 };
                 Err(vec![ParseError {
                     message: format!("Unknown pipeline step '{name}'"),
@@ -655,7 +659,7 @@ impl Parser {
             _ => Err(vec![ParseError {
                 message: format!("Expected pipeline step, found '{}'", self.peek()),
                 span: self.peek_token().span,
-                suggestion: Some("Supported steps: filter, select, derive, join, group, sort, take, skip, update, delete".to_string()),
+                suggestion: Some("Supported steps: filter, select, derive, join (or left/right/full join), group, sort, take, skip, update, delete".to_string()),
             }]),
         }
     }
@@ -756,11 +760,26 @@ impl Parser {
         })
     }
 
+    /// Parse a join step with the type *before* `join`, SQL-style:
+    /// `left join users on a.id == users.id`.
+    fn parse_join_with_prefix(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'left' | 'right' | 'full' | 'inner'
+        let join_type = match token.kind {
+            TokenKind::Left => JoinType::Left,
+            TokenKind::Right => JoinType::Right,
+            TokenKind::Full => JoinType::Full,
+            TokenKind::Inner => JoinType::Inner,
+            _ => unreachable!("parse_join_with_prefix is only called on join-type keywords"),
+        };
+        self.expect(&TokenKind::Join).map_err(|e| vec![e])?;
+        self.parse_join_body(join_type, token.span.start)
+    }
+
     fn parse_join(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
         let token = self.advance(); // consume 'join'
         let span_start = token.span.start;
 
-        // Optional join type
+        // Optional join type (`join left`, `join right`, ...)
         let join_type = match self.peek() {
             TokenKind::Left => {
                 self.advance();
@@ -781,6 +800,15 @@ impl Parser {
             _ => JoinType::Inner,
         };
 
+        self.parse_join_body(join_type, span_start)
+    }
+
+    /// Shared tail of both join spellings: `<table> [as alias] on <expr>`.
+    fn parse_join_body(
+        &mut self,
+        join_type: JoinType,
+        span_start: usize,
+    ) -> Result<PipelineStep, Vec<ParseError>> {
         let table = self.expect_ident().map_err(|e| vec![e])?;
 
         // Optional alias (`as alias` or a bare identifier, per the grammar).
@@ -1084,7 +1112,9 @@ impl Parser {
                 if negated {
                     self.advance(); // consume 'in'
                 }
-                // Check if this is a subquery: `in (from ...)`
+                // A parenthesized group after `in` is either a subquery
+                // (`in (from ...)`) or a literal list (`in (1, 2, 3)`), the
+                // spelling every SQL developer expects.
                 if matches!(self.peek(), TokenKind::LParen) {
                     // Peek ahead to see if `from` follows the `(`
                     if matches!(
@@ -1129,6 +1159,15 @@ impl Parser {
                         };
                         continue;
                     }
+                    // Literal list in parentheses: `in (1, 2, 3)`.
+                    self.advance(); // consume '('
+                    let list = self.parse_delimited_list(&TokenKind::RParen)?;
+                    lhs = Expr::InList {
+                        expr: Box::new(lhs),
+                        list,
+                        negated,
+                    };
+                    continue;
                 }
                 let list = self.parse_in_list()?;
                 lhs = Expr::InList {
@@ -1177,21 +1216,28 @@ impl Parser {
 
     fn parse_in_list(&mut self) -> Result<Vec<Expr>, ParseError> {
         self.expect(&TokenKind::LBracket)?;
+        let list = self.parse_delimited_list(&TokenKind::RBracket)?;
+        Ok(list)
+    }
+
+    /// Parse a comma-separated expression list terminated by `close` (the `]`
+    /// of `in [...]` or the `)` of `in (...)`).
+    fn parse_delimited_list(&mut self, close: &TokenKind) -> Result<Vec<Expr>, ParseError> {
         self.skip_newlines();
         let mut list = Vec::new();
-        if !matches!(self.peek(), TokenKind::RBracket) {
+        if self.peek() != close {
             list.push(self.parse_expr()?);
             while matches!(self.peek(), TokenKind::Comma) {
                 self.advance();
                 self.skip_newlines();
-                if matches!(self.peek(), TokenKind::RBracket) {
+                if self.peek() == close {
                     break;
                 }
                 list.push(self.parse_expr()?);
             }
         }
         self.skip_newlines();
-        self.expect(&TokenKind::RBracket)?;
+        self.expect(close)?;
         Ok(list)
     }
 
@@ -1393,6 +1439,124 @@ mod tests {
         } else {
             panic!("Expected Join step");
         }
+    }
+
+    #[test]
+    fn test_parse_join_sql_style_prefix() {
+        // `left join t on ...` (SQL order) must parse identically to
+        // `join left t on ...` (PipeQL order).
+        for (keyword, expected) in [
+            ("inner", JoinType::Inner),
+            ("left", JoinType::Left),
+            ("right", JoinType::Right),
+            ("full", JoinType::Full),
+        ] {
+            let source = format!("from a | {keyword} join b on a.id == b.a_id");
+            let mut parser = Parser::new(&source).unwrap();
+            let pipeline = parser.parse_pipeline().unwrap();
+            if let PipelineStep::Join {
+                join_type, table, ..
+            } = &pipeline.steps[0]
+            {
+                assert_eq!(*join_type, expected, "{keyword} join");
+                assert_eq!(table.name, "b");
+            } else {
+                panic!("Expected Join step for {keyword} join");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_join_sql_style_prefix_with_alias() {
+        let source = "from notes | left join archive as a on notes.id == a.note_id";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Join {
+            join_type,
+            table,
+            alias,
+            ..
+        } = &pipeline.steps[0]
+        {
+            assert_eq!(*join_type, JoinType::Left);
+            assert_eq!(table.name, "archive");
+            assert_eq!(alias.as_ref().map(|a| a.name.as_str()), Some("a"));
+        } else {
+            panic!("Expected Join step");
+        }
+    }
+
+    #[test]
+    fn test_parse_join_sql_style_bare_alias() {
+        let source = "from posts p | left join users u on p.author_id == u.id";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        if let PipelineStep::Join { alias, .. } = &pipeline.steps[0] {
+            assert_eq!(alias.as_ref().map(|a| a.name.as_str()), Some("u"));
+        } else {
+            panic!("Expected Join step");
+        }
+    }
+
+    #[test]
+    fn test_parse_in_list_parenthesized() {
+        let source = "from t | filter id in (1, 2, 3)";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Filter { expr, .. } = &pipeline.steps[0] {
+            match expr {
+                Expr::InList { list, negated, .. } => {
+                    assert_eq!(list.len(), 3);
+                    assert!(!*negated);
+                }
+                _ => panic!("Expected InList expression"),
+            }
+        } else {
+            panic!("Expected Filter step");
+        }
+    }
+
+    #[test]
+    fn test_parse_not_in_list_parenthesized() {
+        let source = "from t | filter id not in (1, 2)";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Filter { expr, .. } = &pipeline.steps[0] {
+            match expr {
+                Expr::InList { negated, .. } => assert!(*negated),
+                _ => panic!("Expected InList expression"),
+            }
+        } else {
+            panic!("Expected Filter step");
+        }
+    }
+
+    #[test]
+    fn test_parse_in_list_parenthesized_empty() {
+        let source = "from t | filter id in ()";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        if let PipelineStep::Filter { expr, .. } = &pipeline.steps[0] {
+            match expr {
+                Expr::InList { list, .. } => assert!(list.is_empty()),
+                _ => panic!("Expected InList expression"),
+            }
+        } else {
+            panic!("Expected Filter step");
+        }
+    }
+
+    #[test]
+    fn test_parse_join_prefix_and_in_parens_combined() {
+        let source =
+            "from orders | left join customers on orders.customer_id == customers.id | filter customers.region in ('EU', 'APAC')";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        assert!(matches!(&pipeline.steps[0], PipelineStep::Join { .. }));
+        assert!(matches!(&pipeline.steps[1], PipelineStep::Filter { .. }));
     }
 
     #[test]

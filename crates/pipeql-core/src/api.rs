@@ -366,6 +366,46 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_left_join_sql_style_prefix() {
+        let result = compile(
+            "from notes | left join archive on notes.id == archive.note_id",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("LEFT JOIN archive ON (notes.id = archive.note_id)"));
+    }
+
+    #[test]
+    fn test_compile_full_join_sql_style_prefix() {
+        let result = compile(
+            "from a | full join b on a.id == b.a_id | select [a.id]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result.sql.contains("FULL OUTER JOIN b ON (a.id = b.a_id)"));
+    }
+
+    #[test]
+    fn test_compile_in_list_parenthesized() {
+        let result = compile("from notes | filter id in (1, 2, 3)", "sqlite").unwrap();
+        assert!(result.sql.contains("(id IN (1, 2, 3))"));
+        assert!(result.params.is_empty());
+    }
+
+    #[test]
+    fn test_compile_not_in_parenthesized_with_params() {
+        let result = compile(
+            "from notes | filter id not in ($a, $b, $c)",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("(id NOT IN ($1, $2, $3))"));
+        assert_eq!(result.params, vec!["a", "b", "c"]);
+    }
+
+    #[test]
     fn test_compile_subquery() {
         let result = compile(
             "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",

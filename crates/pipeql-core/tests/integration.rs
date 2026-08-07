@@ -150,6 +150,102 @@ fn test_default_join_is_inner() {
 }
 
 #[test]
+fn test_all_join_types_sql_style_prefix() {
+    // `left join b on ...` (SQL order) — the spelling the docs advertise.
+    for (join_kw, expected) in [
+        ("inner", "INNER JOIN"),
+        ("left", "LEFT JOIN"),
+        ("right", "RIGHT JOIN"),
+        ("full", "FULL OUTER JOIN"),
+    ] {
+        let (sql, _) = compile_pg(&format!("from a | {join_kw} join b on a.id == b.a_id"));
+        assert!(
+            sql.contains(expected),
+            "{join_kw} join should produce {expected}, got: {sql}"
+        );
+    }
+}
+
+#[test]
+fn test_left_join_sql_style_prefix() {
+    let (sql, _) = compile_pg("from notes | left join archive on notes.id == archive.note_id");
+    assert!(sql.contains("LEFT JOIN archive ON (notes.id = archive.note_id)"));
+}
+
+#[test]
+fn test_left_join_sql_style_prefix_with_alias() {
+    let (sql, _) =
+        compile_pg("from posts as p | left join users as u on p.author_id == u.id");
+    assert!(sql.contains("FROM posts AS p"));
+    assert!(sql.contains("LEFT JOIN users AS u ON (p.author_id = u.id)"));
+}
+
+#[test]
+fn test_outer_join_types_all_dialects() {
+    for dialect in ["postgres", "sqlite", "duckdb", "mysql"] {
+        for (join_kw, expected) in [
+            ("left", "LEFT JOIN"),
+            ("right", "RIGHT JOIN"),
+            ("full", "FULL OUTER JOIN"),
+        ] {
+            let (sql, _) =
+                compile(&format!("from a | {join_kw} join b on a.id == b.a_id"), dialect);
+            assert!(
+                sql.contains(expected),
+                "{dialect} {join_kw} join should produce {expected}, got: {sql}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_in_literal_list_parenthesized() {
+    let (sql, params) = compile_pg("from t | filter id in (1, 2, 3)");
+    assert!(sql.contains("(id IN (1, 2, 3))"));
+    assert!(params.is_empty());
+}
+
+#[test]
+fn test_in_string_list_parenthesized() {
+    let (sql, params) = compile_pg("from t | filter status in ('a', 'b')");
+    assert!(sql.contains("(status IN ($1, $2))"));
+    assert_eq!(params, vec!["a".to_string(), "b".to_string()]);
+}
+
+#[test]
+fn test_not_in_parenthesized() {
+    let (sql, _) = compile_pg("from t | filter id not in (1, 2, 3)");
+    assert!(sql.contains("(id NOT IN (1, 2, 3))"));
+}
+
+#[test]
+fn test_in_parenthesized_with_params() {
+    let (sql, params) = compile_pg("from t | filter region in ($a, $b)");
+    assert!(sql.contains("(region IN ($1, $2))"));
+    assert_eq!(params, vec!["a".to_string(), "b".to_string()]);
+}
+
+#[test]
+fn test_in_parenthesized_all_dialects() {
+    for dialect in ["postgres", "sqlite", "duckdb", "mysql"] {
+        let (sql, params) = compile("from t | filter id in (1, 2, 3)", dialect);
+        assert!(sql.contains("(id IN (1, 2, 3))"), "{dialect}: {sql}");
+        assert!(params.is_empty(), "{dialect}");
+    }
+}
+
+#[test]
+fn test_left_join_with_in_parens_combined() {
+    let (sql, _) = compile_pg(
+        "from orders | left join customers on orders.customer_id == customers.id \
+         | filter customers.region in ('EU', 'APAC') | select [orders.id]",
+    );
+    assert!(sql.contains("LEFT JOIN customers ON (orders.customer_id = customers.id)"));
+    assert!(sql.contains("(customers.region IN ($1, $2))"));
+    assert!(sql.contains("SELECT orders.id"));
+}
+
+#[test]
 fn test_group_by_multiple_columns() {
     let (sql, _) = compile_pg("from sales | group [region, product] (total = sum(amount))");
     assert!(sql.contains("GROUP BY region, product"));
