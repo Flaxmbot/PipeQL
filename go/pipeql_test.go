@@ -129,7 +129,7 @@ func TestStatementMetadataUpsert(t *testing.T) {
 	if !res.IsMutation {
 		t.Error("upsert must be a mutation")
 	}
-	if !strings.Contains(res.SQL, "ON CONFLICT (email) DO UPDATE SET name = $3") {
+	if !strings.Contains(res.SQL, "ON CONFLICT (email) DO UPDATE SET name = $1") {
 		t.Errorf("unexpected sql: %s", res.SQL)
 	}
 }

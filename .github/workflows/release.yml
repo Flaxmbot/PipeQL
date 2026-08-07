@@ -6,8 +6,49 @@ on:
       - 'v*'
 
 jobs:
+  test:
+    name: CI Tests (required gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Cargo Tests
+        run: cargo test --workspace
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build & Test Python Binding
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest
+          maturin develop -m crates/pipeql-python/Cargo.toml
+          pytest python/tests/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build & Test JS/WASM Binding
+        run: |
+          wasm-pack build crates/pipeql-wasm --target web --out-dir ../../js/dist
+          cd js
+          npm ci
+          npm test
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build & Test Go Binding
+        run: |
+          cargo build --release -p pipeql-cffi
+          sudo cp target/release/libpipeql_cffi.so /usr/local/lib/ || true
+          sudo ldconfig || true
+          cd go
+          go test -v ./...
+
   publish-npm:
     name: Publish pipeql to npm
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +83,7 @@ jobs:
 
   publish-pypi:
     name: Publish pipeql to PyPI
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +112,7 @@ jobs:
 
   build-release:
     name: Build binaries (${{ matrix.os }})
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -110,6 +153,7 @@ jobs:
 
   publish-crates-io:
     name: Publish pipeql-core to crates.io
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +170,7 @@ jobs:
 
   publish-go-proxy:
     name: Publish to Go Proxy (pkg.go.dev)
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +185,7 @@ jobs:
 
   package-c-sdk:
     name: Package C/C++ SDK Header
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

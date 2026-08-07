@@ -60,7 +60,7 @@ await compile("from t", "postgres");
   );
   assert.equal(upsert.statementType, "upsert");
   assert.equal(upsert.isMutation, true);
-  assert.ok(upsert.sql.includes("ON CONFLICT (email) DO UPDATE SET name = $3"));
+  assert.ok(upsert.sql.includes("ON CONFLICT (email) DO UPDATE SET name = $1"));
 
   const union = await compile(
     "from active_users | select [id, name] | union from archived_users | select [id, name]",

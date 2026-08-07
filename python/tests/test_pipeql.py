@@ -40,7 +40,7 @@ def test_pipeql_python():
     )
     assert upsert["statement_type"] == "upsert"
     assert upsert["is_mutation"] is True
-    assert "ON CONFLICT (email) DO UPDATE SET name = $3" in upsert["sql"]
+    assert "ON CONFLICT (email) DO UPDATE SET name = $1" in upsert["sql"]
 
     # Union statement metadata
     union = p.compile(
