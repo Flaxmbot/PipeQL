@@ -152,22 +152,24 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
         let keywords = [
-            "from", "into", "table", "insert", "update", "delete", "filter", "select", "derive",
+            "from", "into", "table", "insert", "upsert", "update", "delete", "union", "filter", "select", "derive",
             "join", "group", "sort", "take", "skip",
         ];
         let words = [
             "left", "right", "full", "inner", "as", "on", "and", "or", "not", "in", "is", "null",
-            "true", "false", "asc", "desc",
+            "true", "false", "asc", "desc", "conflict", "do", "all",
         ];
         let types = ["int", "float", "string", "bool", "timestamp", "datetime"];
         let modifiers = ["primary", "auto", "unique", "default"];
         let descriptions = [
             ("from", "Define the source table"),
-            ("into", "Target a table for an insert"),
+            ("into", "Target a table for an insert/upsert"),
             ("table", "Declare a table schema"),
             ("insert", "Insert assigned values into the target table"),
+            ("upsert", "Insert or update on conflict"),
             ("update", "Update rows matched by preceding filters"),
             ("delete", "Delete rows matched by preceding filters"),
+            ("union", "Combine result sets of two statements"),
         ];
         let items: Vec<CompletionItem> =
             keywords

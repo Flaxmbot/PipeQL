@@ -25,7 +25,7 @@
     "pipeline": {
       "patterns": [
         {
-          "match": "\\b(from|into|insert|update|delete|table|filter|select|derive|join|group|sort|take|skip|on|as)\\b",
+          "match": "\\b(from|into|insert|upsert|update|delete|union|table|filter|select|derive|join|group|sort|take|skip|on|as|conflict|do|all)\\b",
           "name": "keyword.control.pipeql"
         },
         {
