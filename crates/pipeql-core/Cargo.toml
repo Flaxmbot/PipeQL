@@ -3,7 +3,10 @@ name = "pipeql-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core compiler for PipeQL - lexer, parser, AST, analyzer, and SQL codegen"
+keywords = ["sql", "query", "compiler", "postgres", "sqlite"]
+categories = ["database", "compilers", "parser-implementations"]
 
 [dependencies]
 thiserror.workspace = true

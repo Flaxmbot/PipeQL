@@ -181,6 +181,9 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME}
           echo "Publishing Go module at version ${VERSION}"
+          # Go modules in subdirectories need go/vX.Y.Z tag format
+          git tag "go/${VERSION}" || true
+          git push origin "go/${VERSION}" || true
           curl -s "https://proxy.golang.org/github.com/!flaxmbot/!pipe!q!l/go/@v/${VERSION}.info" || true
 
   package-c-sdk:
