@@ -11,8 +11,8 @@ pub use analyzer::{
     Analysis, Analyzer, AnalyzerError, Catalog, ColumnMeta, ParamMeta, TableMeta, ValueType,
 };
 pub use api::{
-    compile, compile_with_catalog, parse, parse_statement, CompiledQuery, PipeQLError,
-    StatementType,
+    compile, compile_with_catalog, parse, parse_statement, supported_dialects, CompiledQuery,
+    PipeQLError, StatementType,
 };
 pub use ast::*;
 pub use codegen::{

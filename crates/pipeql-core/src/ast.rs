@@ -143,6 +143,11 @@ pub enum Expr {
         list: Vec<Expr>,
         negated: bool,
     },
+    InSubquery {
+        expr: Box<Expr>,
+        subquery: Box<Pipeline>,
+        negated: bool,
+    },
     BinaryOp {
         left: Box<Expr>,
         op: BinaryOp,
@@ -255,7 +260,9 @@ pub struct ColumnDef {
 pub enum Statement {
     Pipeline(Pipeline),
     Insert(InsertStmt),
+    Upsert(UpsertStmt),
     CreateTable(CreateTableStmt),
+    Union(UnionStmt),
 }
 
 /// An `insert` statement: `into <table> | insert [assignments]`.
@@ -267,6 +274,28 @@ pub struct InsertStmt {
     /// All comments encountered in the source, in source order, so the AST is
     /// lossless and can be used for tooling (LSP, formatters, tree-sitter).
     pub comments: Vec<Comment>,
+    pub span: Span,
+}
+
+/// An `upsert` statement: `into <table> | upsert [...] | conflict [...] | do update [...]`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpsertStmt {
+    pub table: Ident,
+    pub assignments: Vec<Assignment>,
+    pub conflict_columns: Vec<Ident>,
+    pub do_update: Vec<Assignment>,
+    pub comments: Vec<Comment>,
+    pub span: Span,
+}
+
+/// A `union` statement: `<left> | union [all] <right>`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnionStmt {
+    pub left: Box<Statement>,
+    pub right: Box<Statement>,
+    pub all: bool,
     pub span: Span,
 }
 

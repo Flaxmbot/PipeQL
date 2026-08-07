@@ -35,6 +35,11 @@ pub enum TokenKind {
     Inner,
     Asc,
     Desc,
+    Upsert,
+    Conflict,
+    Do,
+    Union,
+    All,
 
     // Literals
     Integer(i64),
@@ -107,6 +112,11 @@ impl fmt::Display for TokenKind {
             TokenKind::Inner => write!(f, "inner"),
             TokenKind::Asc => write!(f, "asc"),
             TokenKind::Desc => write!(f, "desc"),
+            TokenKind::Upsert => write!(f, "upsert"),
+            TokenKind::Conflict => write!(f, "conflict"),
+            TokenKind::Do => write!(f, "do"),
+            TokenKind::Union => write!(f, "union"),
+            TokenKind::All => write!(f, "all"),
             TokenKind::Integer(v) => write!(f, "{v}"),
             TokenKind::Float(v) => write!(f, "{v}"),
             TokenKind::String(v) => write!(f, "'{v}'"),
@@ -314,6 +324,11 @@ impl<'a> Lexer<'a> {
             "inner" => TokenKind::Inner,
             "asc" => TokenKind::Asc,
             "desc" => TokenKind::Desc,
+            "upsert" => TokenKind::Upsert,
+            "conflict" => TokenKind::Conflict,
+            "do" => TokenKind::Do,
+            "union" => TokenKind::Union,
+            "all" => TokenKind::All,
             _ => TokenKind::Ident(s.to_string()),
         }
     }

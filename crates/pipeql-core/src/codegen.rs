@@ -231,6 +231,24 @@ impl Compiler {
                 let keyword = if *negated { "NOT IN" } else { "IN" };
                 format!("({inner} {keyword} ({items}))")
             }
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated,
+            } => {
+                let inner = self.compile_expr_inner(expr, substitute);
+                // Compile the subquery pipeline as a nested SELECT
+                let mut sub_compiler = Compiler::new(self.kind);
+                let sub_sql = sub_compiler.compile_pipeline(subquery).unwrap_or_default();
+                // Remove trailing semicolon from subquery
+                let sub_sql = sub_sql.trim_end_matches(';').trim();
+                // Merge subquery params into our params
+                for p in sub_compiler.params {
+                    self.placeholder(&p);
+                }
+                let keyword = if *negated { "NOT IN" } else { "IN" };
+                format!("({inner} {keyword} ({sub_sql}))")
+            }
             Expr::BinaryOp { left, op, right } => {
                 let l = self.compile_expr_inner(left, substitute);
                 let r = self.compile_expr_inner(right, substitute);
@@ -526,7 +544,9 @@ impl Compiler {
         match stmt {
             Statement::Pipeline(p) => self.compile_pipeline(p),
             Statement::Insert(i) => self.compile_insert(i),
+            Statement::Upsert(u) => self.compile_upsert(u),
             Statement::CreateTable(c) => self.compile_create_table(c),
+            Statement::Union(u) => self.compile_union(u),
         }
     }
 
@@ -632,6 +652,76 @@ impl Compiler {
         }
         sql.push(';');
         Ok(sql)
+    }
+
+    /// Compile an `upsert` statement with ON CONFLICT / ON DUPLICATE KEY.
+    fn compile_upsert(&mut self, upsert: &UpsertStmt) -> Result<String, CodegenError> {
+        self.strict_literals = true;
+        let cols = upsert
+            .assignments
+            .iter()
+            .map(|a| a.name.name.clone())
+            .collect::<Vec<_>>();
+        let vals = upsert
+            .assignments
+            .iter()
+            .map(|a| self.compile_expr(&a.expr))
+            .collect::<Vec<_>>();
+        let conflict_cols = upsert
+            .conflict_columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>();
+        let update_set = upsert
+            .do_update
+            .iter()
+            .map(|a| format!("{} = {}", a.name.name, self.compile_expr(&a.expr)))
+            .collect::<Vec<_>>();
+
+        let mut sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            upsert.table.name,
+            cols.join(", "),
+            vals.join(", ")
+        );
+
+        match self.kind {
+            DialectKind::Mysql => {
+                // MySQL uses ON DUPLICATE KEY UPDATE
+                sql.push_str(&format!(
+                    "\nON DUPLICATE KEY UPDATE {}",
+                    update_set.join(", ")
+                ));
+            }
+            _ => {
+                // Postgres, SQLite, DuckDB use ON CONFLICT
+                sql.push_str(&format!(
+                    "\nON CONFLICT ({}) DO UPDATE SET {}",
+                    conflict_cols.join(", "),
+                    update_set.join(", ")
+                ));
+                if matches!(self.kind, DialectKind::Postgres) {
+                    sql.push_str(" RETURNING *");
+                }
+            }
+        }
+
+        sql.push(';');
+        Ok(sql)
+    }
+
+    /// Compile a `union` statement.
+    fn compile_union(&mut self, union_stmt: &UnionStmt) -> Result<String, CodegenError> {
+        let left_sql = self.compile_statement(&union_stmt.left)?;
+        // Remove trailing semicolon from left
+        let left_sql = left_sql.trim_end_matches(';').trim();
+        let right_sql = self.compile_statement(&union_stmt.right)?;
+        // Remove trailing semicolon from right
+        let right_sql = right_sql.trim_end_matches(';').trim();
+
+        let union_keyword = if union_stmt.all { "UNION ALL" } else { "UNION" };
+
+        Ok(format!("{left_sql}\n{union_keyword}\n{right_sql};"))
     }
 
     /// Compile a `table` DDL statement. DDL carries no parameters.
