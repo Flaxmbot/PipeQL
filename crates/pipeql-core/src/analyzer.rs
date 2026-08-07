@@ -164,6 +164,26 @@ impl Analysis {
     pub fn param_count(&self) -> usize {
         self.param_map.len()
     }
+
+    /// Merge another Analysis into this one, deduplicating parameters by name.
+    pub fn merge(&mut self, other: &Analysis) {
+        for p in &other.param_map {
+            if let Some(&idx) = self.param_index.get(&p.name) {
+                self.param_map[idx].occurrences.extend(&p.occurrences);
+            } else {
+                let idx = self.param_map.len();
+                self.param_index.insert(p.name.clone(), idx);
+                self.param_map.push(ParamMeta {
+                    name: p.name.clone(),
+                    ty: p.ty,
+                    occurrences: p.occurrences.clone(),
+                });
+            }
+        }
+        if other.validated_columns {
+            self.validated_columns = true;
+        }
+    }
 }
 
 /// Semantic analyzer: builds the isolated Parameter Map, infers expression
@@ -205,6 +225,29 @@ impl<'a> Analyzer<'a> {
                 } else {
                     Err(errors)
                 }
+            }
+            Statement::Upsert(upsert) => {
+                self.strict_literals = true;
+                self.step_span = upsert.span;
+                let mut analysis = Analysis::default();
+                let mut errors = Vec::new();
+                for a in &upsert.assignments {
+                    self.infer_expr(&mut analysis, &mut errors, &[], &[], &a.expr);
+                }
+                for a in &upsert.do_update {
+                    self.infer_expr(&mut analysis, &mut errors, &[], &[], &a.expr);
+                }
+                if errors.is_empty() {
+                    Ok(analysis)
+                } else {
+                    Err(errors)
+                }
+            }
+            Statement::Union(union) => {
+                let mut left = self.analyze_statement(&union.left)?;
+                let right = self.analyze_statement(&union.right)?;
+                left.merge(&right);
+                Ok(left)
             }
             Statement::CreateTable(_) => Ok(Analysis::default()),
         }
@@ -371,6 +414,24 @@ impl<'a> Analyzer<'a> {
                 self.infer_expr(analysis, errors, tables, scope, expr);
                 for item in list {
                     self.infer_expr(analysis, errors, tables, scope, item);
+                }
+                ValueType::Bool
+            }
+            Expr::InSubquery { expr, subquery, .. } => {
+                self.infer_expr(analysis, errors, tables, scope, expr);
+                // Walk the subquery's expressions for parameter extraction
+                for step in &subquery.steps {
+                    match step {
+                        PipelineStep::Filter { expr, .. } => {
+                            self.infer_expr(analysis, errors, tables, scope, expr);
+                        }
+                        PipelineStep::Select { columns, .. } => {
+                            for item in columns {
+                                self.infer_expr(analysis, errors, tables, scope, &item.expr);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 ValueType::Bool
             }

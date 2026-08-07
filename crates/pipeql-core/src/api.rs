@@ -28,6 +28,10 @@ pub enum StatementType {
     Delete,
     /// `table <name> [column defs]` DDL.
     CreateTable,
+    /// `into <table> | upsert [...] | conflict [...] | do update [...]`.
+    Upsert,
+    /// `<statement> | union [all] <statement>`.
+    Union,
 }
 
 impl StatementType {
@@ -36,6 +40,8 @@ impl StatementType {
         match stmt {
             crate::ast::Statement::Insert(_) => StatementType::Insert,
             crate::ast::Statement::CreateTable(_) => StatementType::CreateTable,
+            crate::ast::Statement::Upsert(_) => StatementType::Upsert,
+            crate::ast::Statement::Union(_) => StatementType::Union,
             crate::ast::Statement::Pipeline(p) => {
                 if p.steps
                     .iter()
@@ -63,14 +69,19 @@ impl StatementType {
             StatementType::Update => "update",
             StatementType::Delete => "delete",
             StatementType::CreateTable => "create_table",
+            StatementType::Upsert => "upsert",
+            StatementType::Union => "union",
         }
     }
 
-    /// True for statements that write (insert/update/delete).
+    /// True for statements that write (insert/update/delete/upsert).
     pub fn is_mutation(&self) -> bool {
         matches!(
             self,
-            StatementType::Insert | StatementType::Update | StatementType::Delete
+            StatementType::Insert
+                | StatementType::Update
+                | StatementType::Delete
+                | StatementType::Upsert
         )
     }
 }
@@ -159,7 +170,10 @@ pub fn compile_with_catalog(
                 .map_err(PipeQLError::Codegen)?;
             (sql, params, analysis)
         }
-        Statement::Insert(_) | Statement::CreateTable(_) => {
+        Statement::Insert(_)
+        | Statement::Upsert(_)
+        | Statement::CreateTable(_)
+        | Statement::Union(_) => {
             let analysis = d
                 .analyze_statement(&stmt, catalog)
                 .map_err(PipeQLError::Analysis)?;
@@ -270,5 +284,409 @@ mod tests {
     fn test_statement_type_serializes_snake_case() {
         let json = serde_json::to_string(&StatementType::CreateTable).unwrap();
         assert_eq!(json, "\"create_table\"");
+    }
+
+    #[test]
+    fn test_statement_type_upsert() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "postgres",
+        )
+        .unwrap();
+        assert_eq!(result.statement_type, StatementType::Upsert);
+        assert!(result.is_mutation);
+        assert_eq!(result.statement_type.as_str(), "upsert");
+    }
+
+    #[test]
+    fn test_statement_type_union() {
+        let result = compile(
+            "from active_users | select [id, name] | union from archived_users | select [id, name]",
+            "postgres",
+        )
+        .unwrap();
+        assert_eq!(result.statement_type, StatementType::Union);
+        assert!(!result.is_mutation);
+        assert_eq!(result.statement_type.as_str(), "union");
+    }
+
+    #[test]
+    fn test_compile_upsert_postgres() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("INSERT INTO users (name, email) VALUES ($1, $2)"));
+        // Postgres deduplicates params by name, so $name is $1 in both places
+        assert!(result
+            .sql
+            .contains("ON CONFLICT (email) DO UPDATE SET name = $1"));
+        assert!(result.sql.contains("RETURNING *"));
+        assert_eq!(result.params, vec!["name", "email"]);
+    }
+
+    #[test]
+    fn test_compile_upsert_mysql() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "mysql",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("INSERT INTO users (name, email) VALUES (?, ?)"));
+        assert!(result.sql.contains("ON DUPLICATE KEY UPDATE name = ?"));
+        assert!(!result.sql.contains("ON CONFLICT"));
+    }
+
+    #[test]
+    fn test_compile_union() {
+        let result = compile(
+            "from active_users | select [id, name] | union from archived_users | select [id, name]",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION"));
+        assert!(!result.sql.contains("UNION ALL"));
+        assert!(result.sql.contains("SELECT id, name FROM active_users"));
+        assert!(result.sql.contains("SELECT id, name FROM archived_users"));
+    }
+
+    #[test]
+    fn test_compile_union_all() {
+        let result = compile(
+            "from active_users | select [id, name] | union all from archived_users | select [id, name]",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn test_compile_subquery() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers"));
+        assert!(result.sql.contains("WHERE (region = $1)"));
+        assert_eq!(result.params, vec!["EU"]);
+    }
+
+    #[test]
+    fn test_upsert_params() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "sqlite",
+        )
+        .unwrap();
+        assert_eq!(result.params, vec!["name", "email", "name"]);
+    }
+
+    #[test]
+    fn test_union_params() {
+        let result = compile(
+            "from users | filter status == $s1 | select [id] | union from archived | filter status == $s2 | select [id]",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.params.contains(&"s1".to_string()));
+        assert!(result.params.contains(&"s2".to_string()));
+    }
+
+    // === Upsert: all 4 dialects ===
+
+    #[test]
+    fn test_upsert_sqlite() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("INSERT INTO users (name, email) VALUES (?, ?)"));
+        assert!(result
+            .sql
+            .contains("ON CONFLICT (email) DO UPDATE SET name = ?"));
+        assert!(!result.sql.contains("RETURNING"));
+        assert_eq!(result.params, vec!["name", "email", "name"]);
+    }
+
+    #[test]
+    fn test_upsert_duckdb() {
+        let result = compile(
+            "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+            "duckdb",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("INSERT INTO users (name, email) VALUES (?, ?)"));
+        assert!(result
+            .sql
+            .contains("ON CONFLICT (email) DO UPDATE SET name = ?"));
+        assert!(!result.sql.contains("RETURNING"));
+        assert_eq!(result.params, vec!["name", "email", "name"]);
+    }
+
+    #[test]
+    fn test_upsert_multiple_conflict_columns() {
+        let result = compile(
+            "into users | upsert [name = $name] | conflict [org_id, email] | do update [name = $name]",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("ON CONFLICT (org_id, email) DO UPDATE SET name = $1"));
+    }
+
+    #[test]
+    fn test_upsert_multiple_do_update_cols() {
+        let result = compile(
+            "into users | upsert [name = $n, email = $e] | conflict [email] | do update [name = $n, email = $e]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result
+            .sql
+            .contains("ON CONFLICT (email) DO UPDATE SET name = ?, email = ?"));
+        // params: $n (insert), $e (insert), $n (do update), $e (do update)
+        // but sqlite doesn't dedup, so all 4 appear
+        assert_eq!(result.params, vec!["n", "e", "n", "e"]);
+    }
+
+    #[test]
+    fn test_upsert_with_string_literal() {
+        let result = compile(
+            "into users | upsert [name = 'Alice', email = $email] | conflict [email] | do update [name = 'Alice']",
+            "postgres",
+        )
+        .unwrap();
+        // 'Alice' becomes a parameter in strict_literals mode
+        assert!(result.sql.contains("$1"));
+        assert!(result.params.contains(&"Alice".to_string()));
+    }
+
+    // === Union: all 4 dialects ===
+
+    #[test]
+    fn test_union_sqlite() {
+        let result = compile(
+            "from active_users | select [id] | union from archived_users | select [id]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION"));
+        assert!(!result.sql.contains("UNION ALL"));
+        assert!(result.sql.contains("SELECT id FROM active_users"));
+        assert!(result.sql.contains("SELECT id FROM archived_users"));
+    }
+
+    #[test]
+    fn test_union_duckdb() {
+        let result = compile(
+            "from active_users | select [id] | union from archived_users | select [id]",
+            "duckdb",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION"));
+        assert!(result.sql.contains("SELECT id FROM active_users"));
+    }
+
+    #[test]
+    fn test_union_mysql() {
+        let result = compile(
+            "from active_users | select [id] | union from archived_users | select [id]",
+            "mysql",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION"));
+        assert!(!result.sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn test_union_all_sqlite() {
+        let result = compile(
+            "from a | select [id] | union all from b | select [id]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn test_union_all_mysql() {
+        let result = compile(
+            "from a | select [id] | union all from b | select [id]",
+            "mysql",
+        )
+        .unwrap();
+        assert!(result.sql.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn test_union_preserves_params_from_both_sides() {
+        let result = compile(
+            "from t1 | filter x == $a | select [id] | union from t2 | filter y == $b | select [id]",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result.params.contains(&"a".to_string()));
+        assert!(result.params.contains(&"b".to_string()));
+        // Left params come first
+        let pos_a = result.params.iter().position(|p| p == "a").unwrap();
+        let pos_b = result.params.iter().position(|p| p == "b").unwrap();
+        assert!(pos_a < pos_b);
+    }
+
+    #[test]
+    fn test_union_with_filters() {
+        let result = compile(
+            "from users | filter active == true | select [id, name] | union from admins | filter role == 'admin' | select [id, name]",
+            "postgres",
+        )
+        .unwrap();
+        // Boolean `true` is inlined, not parameterized; string 'admin' becomes $1
+        assert!(result.sql.contains("WHERE (active = true)"));
+        assert!(result.sql.contains("WHERE (role = $1)"));
+        assert_eq!(result.params, vec!["admin"]);
+    }
+
+    // === Subquery: all 4 dialects ===
+
+    #[test]
+    fn test_subquery_sqlite() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+            "sqlite",
+        )
+        .unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers"));
+        assert!(result.sql.contains("WHERE (region = ?)"));
+        assert_eq!(result.params, vec!["EU"]);
+    }
+
+    #[test]
+    fn test_subquery_duckdb() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+            "duckdb",
+        )
+        .unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers"));
+        assert!(result.sql.contains("WHERE (region = ?)"));
+    }
+
+    #[test]
+    fn test_subquery_mysql() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+            "mysql",
+        )
+        .unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers"));
+        assert!(result.sql.contains("WHERE (region = ?)"));
+    }
+
+    #[test]
+    fn test_not_in_subquery() {
+        let result = compile(
+            "from orders | filter customer_id not in (from banned | select [id])",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("NOT IN (SELECT id FROM banned)"));
+    }
+
+    #[test]
+    fn test_subquery_with_multiple_filters() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == 'EU' and status == 'active' | select [id])",
+            "postgres",
+        )
+        .unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers"));
+        assert!(result
+            .sql
+            .contains("WHERE ((region = $1) AND (status = $2))"));
+        assert_eq!(result.params, vec!["EU", "active"]);
+    }
+
+    #[test]
+    fn test_subquery_params_deduplicated_postgres() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == $r | select [id]) | filter region == $r",
+            "postgres",
+        )
+        .unwrap();
+        // Postgres deduplicates $r to $1
+        assert_eq!(result.params, vec!["r"]);
+        assert!(result.sql.contains("$1"));
+        assert!(!result.sql.contains("$2"));
+    }
+
+    #[test]
+    fn test_subquery_params_not_deduped_sqlite() {
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == $r | select [id]) | filter region == $r",
+            "sqlite",
+        )
+        .unwrap();
+        // SQLite doesn't dedup — $r appears twice
+        assert_eq!(result.params, vec!["r", "r"]);
+    }
+
+    // === Edge cases ===
+
+    #[test]
+    fn test_upsert_is_mutation() {
+        for dialect in &["postgres", "sqlite", "duckdb", "mysql"] {
+            let result = compile(
+                "into t | upsert [a = $a] | conflict [id] | do update [a = $a]",
+                dialect,
+            )
+            .unwrap();
+            assert_eq!(result.statement_type, StatementType::Upsert);
+            assert!(result.is_mutation);
+        }
+    }
+
+    #[test]
+    fn test_union_is_not_mutation() {
+        for dialect in &["postgres", "sqlite", "duckdb", "mysql"] {
+            let result = compile(
+                "from t1 | select [id] | union from t2 | select [id]",
+                dialect,
+            )
+            .unwrap();
+            assert_eq!(result.statement_type, StatementType::Union);
+            assert!(!result.is_mutation);
+        }
+    }
+
+    #[test]
+    fn test_union_statement_type_str() {
+        assert_eq!(StatementType::Upsert.as_str(), "upsert");
+        assert_eq!(StatementType::Union.as_str(), "union");
+    }
+
+    #[test]
+    fn test_union_chains_three_statements() {
+        let result = compile(
+            "from a | select [id] | union from b | select [id] | union from c | select [id]",
+            "postgres",
+        )
+        .unwrap();
+        // Should produce: (a UNION b) UNION c
+        assert!(result.sql.contains("UNION"));
+        assert!(result.sql.contains("FROM a"));
+        assert!(result.sql.contains("FROM b"));
+        assert!(result.sql.contains("FROM c"));
     }
 }

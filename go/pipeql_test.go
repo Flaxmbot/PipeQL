@@ -114,3 +114,70 @@ func TestVersion(t *testing.T) {
 		t.Error("empty version")
 	}
 }
+
+func TestStatementMetadataUpsert(t *testing.T) {
+	res, err := Compile(
+		"into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+		"postgres",
+	)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if res.StatementType != "upsert" {
+		t.Errorf("expected statement_type 'upsert', got %q", res.StatementType)
+	}
+	if !res.IsMutation {
+		t.Error("upsert must be a mutation")
+	}
+	if !strings.Contains(res.SQL, "ON CONFLICT (email) DO UPDATE SET name = $3") {
+		t.Errorf("unexpected sql: %s", res.SQL)
+	}
+}
+
+func TestStatementMetadataUnion(t *testing.T) {
+	res, err := Compile(
+		"from active_users | select [id, name] | union from archived_users | select [id, name]",
+		"postgres",
+	)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if res.StatementType != "union" {
+		t.Errorf("expected statement_type 'union', got %q", res.StatementType)
+	}
+	if res.IsMutation {
+		t.Error("union must not be a mutation")
+	}
+	if !strings.Contains(res.SQL, "UNION") {
+		t.Errorf("unexpected sql: %s", res.SQL)
+	}
+}
+
+func TestCompileUnionAll(t *testing.T) {
+	res, err := Compile(
+		"from active_users | select [id] | union all from archived_users | select [id]",
+		"postgres",
+	)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if !strings.Contains(res.SQL, "UNION ALL") {
+		t.Errorf("expected UNION ALL in sql: %s", res.SQL)
+	}
+}
+
+func TestCompileSubquery(t *testing.T) {
+	res, err := Compile(
+		"from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+		"postgres",
+	)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if !strings.Contains(res.SQL, "IN (SELECT id FROM customers") {
+		t.Errorf("unexpected sql: %s", res.SQL)
+	}
+	if len(res.Params) != 1 || res.Params[0] != "EU" {
+		t.Errorf("expected params [EU], got %v", res.Params)
+	}
+}

@@ -33,6 +33,39 @@ def test_pipeql_python():
     )
     assert p.compile("table notes [id int primary auto]", "sqlite")["is_mutation"] is False
 
+    # Upsert statement metadata
+    upsert = p.compile(
+        "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+        "postgres",
+    )
+    assert upsert["statement_type"] == "upsert"
+    assert upsert["is_mutation"] is True
+    assert "ON CONFLICT (email) DO UPDATE SET name = $3" in upsert["sql"]
+
+    # Union statement metadata
+    union = p.compile(
+        "from active_users | select [id, name] | union from archived_users | select [id, name]",
+        "postgres",
+    )
+    assert union["statement_type"] == "union"
+    assert union["is_mutation"] is False
+    assert "UNION" in union["sql"]
+
+    # Union ALL
+    union_all = p.compile(
+        "from active_users | select [id, name] | union all from archived_users | select [id, name]",
+        "postgres",
+    )
+    assert "UNION ALL" in union_all["sql"]
+
+    # Subquery
+    subq = p.compile(
+        "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+        "postgres",
+    )
+    assert "IN (SELECT id FROM customers" in subq["sql"]
+    assert subq["params"] == ["EU"]
+
     assert isinstance(r["analysis"], dict)
     assert r["analysis"]["param_map"][0]["name"] == "min"
 

@@ -8,7 +8,7 @@
   <a href="https://github.com/Flaxmbot/PipeQL/actions"><img src="https://img.shields.io/github/actions/workflow/status/Flaxmbot/PipeQL/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI Status" /></a>
   <a href="https://npmjs.com/package/@flaxmbot/pipeql"><img src="https://img.shields.io/npm/v/@flaxmbot/pipeql?style=flat-square&logo=npm&logoColor=white&color=38bdf8" alt="npm" /></a>
   <a href="https://pypi.org/project/pipeql"><img src="https://img.shields.io/pypi/v/pipeql?style=flat-square&logo=pypi&logoColor=white&color=818cf8" alt="PyPI" /></a>
-  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/release-v1.0.1-10b981?style=flat-square&logo=github" alt="Release" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/release-v1.1.0-10b981?style=flat-square&logo=github" alt="Release" /></a>
   <a href="https://github.com/Flaxmbot/PipeQL/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-c084fc?style=flat-square" alt="License" /></a>
 </p>
 
@@ -65,7 +65,7 @@ LIMIT 10;
 
 ### 1. Pre-built CLI & Native Shared Libraries
 
-Download pre-compiled release binaries and shared CFFI libraries directly from [GitHub Releases (v1.0.1)](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1):
+Download pre-compiled release binaries and shared CFFI libraries directly from [GitHub Releases (v1.1.0)](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.1.0):
 
 | Platform | CLI Executable | Shared Library (CFFI / Go) |
 | :--- | :--- | :--- |
@@ -110,7 +110,7 @@ Install from npm or from the GitHub release package:
 npm install @flaxmbot/pipeql
 
 # Or install directly from GitHub release tarball
-npm install https://github.com/Flaxmbot/PipeQL/releases/download/v1.0.1/flaxmbot-pipeql-1.0.1.tgz
+npm install https://github.com/Flaxmbot/PipeQL/releases/download/v1.1.0/flaxmbot-pipeql-1.1.0.tgz
 ```
 
 #### Usage:
@@ -226,6 +226,10 @@ func main() {
 - **Lossless AST**: Spans and comments survive parsing for IDE language servers (`pipeql-lsp`) and formatters.
 - **Sub-Millisecond Speed**: Measured average compilation latency of **~19µs** per query.
 - **Zero Unsafe Core**: Enforces `#![deny(unsafe_code)]` across the entire compiler engine.
+- **Upsert**: Insert-or-update with `ON CONFLICT ... DO UPDATE SET` (Postgres/SQLite/DuckDB) or `ON DUPLICATE KEY UPDATE` (MySQL).
+- **Subqueries**: Nested pipelines via `in (from ...)` for correlated and uncorrelated subqueries.
+- **Union / Union All**: Combine result sets from multiple statements with `union` or `union all`.
+- **Live Playground**: Interactive browser-based playground with WASM compilation for all 4 dialects.
 
 ---
 
@@ -247,7 +251,7 @@ PipeQL is designed for first-class AI code generation. The repository includes a
   Included in the `@flaxmbot/pipeql` npm package at `@flaxmbot/pipeql/ai/system_prompt.md`.
 
 - **GitHub Release / Direct Link**:
-  Download [pipeql-ai-system-prompt.md](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1) or fetch directly via raw URL:
+  Download [pipeql-ai-system-prompt.md](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.1.0) or fetch directly via raw URL:
   `https://raw.githubusercontent.com/Flaxmbot/PipeQL/master/ai/system_prompt.md`
 
 ---

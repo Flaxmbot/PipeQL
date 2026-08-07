@@ -6,12 +6,14 @@ compilation contract.
 
 ## 1. Overview
 
-A PipeQL program is a **statement**. Three statement kinds are supported:
+A PipeQL program is a **statement**. Five statement kinds are supported:
 
 | Statement | Purpose                                   | Keyword      |
 | --------- | ----------------------------------------- | ------------ |
 | Pipeline  | Read data (`SELECT ...`)                  | `from`       |
 | Insert    | Create records (`INSERT`)                 | `into`       |
+| Upsert    | Insert or update (`INSERT ... ON CONFLICT`)| `into`       |
+| Union     | Combine results (`UNION`)                 | `union`      |
 | Table     | Declare schema (`CREATE TABLE`)           | `table`      |
 
 A **pipeline** is a single source table followed by zero or more transformation
@@ -130,7 +132,31 @@ INSERT INTO <table> (cols) VALUES (params)
 On Postgres a `RETURNING *` clause is appended so generated primary keys are
 returned (PRD §4.1). Question-style dialects omit it.
 
-### 3.3 Update
+### 3.3 Upsert
+
+```
+into <table>
+| upsert [ <col> = <value>, ... ]
+| conflict [ <col>, ... ]
+| do update [ <col> = <value>, ... ]
+```
+
+The `upsert` statement performs an insert-or-update (UPSERT). The `conflict`
+clause specifies which columns trigger the conflict resolution. The `do update`
+clause specifies which columns to update on conflict. Every value is a bind
+parameter. Compiles to:
+
+| Dialect  | SQL |
+| -------- | --- |
+| Postgres | `INSERT INTO <table> (cols) VALUES (params) ON CONFLICT (conflict_cols) DO UPDATE SET ... RETURNING *` |
+| SQLite   | `INSERT INTO <table> (cols) VALUES (params) ON CONFLICT (conflict_cols) DO UPDATE SET ...` |
+| DuckDB   | `INSERT INTO <table> (cols) VALUES (params) ON CONFLICT (conflict_cols) DO UPDATE SET ...` |
+| MySQL    | `INSERT INTO <table> (cols) VALUES (params) ON DUPLICATE KEY UPDATE ...` |
+
+MySQL uses `ON DUPLICATE KEY UPDATE` instead of `ON CONFLICT ... DO UPDATE SET`.
+The `conflict` columns are semantically required but not rendered in MySQL SQL.
+
+### 3.4 Update
 
 ```
 from <table>
@@ -150,7 +176,7 @@ WHERE <filter...>;
 **Parameter order:** `SET` assignment values come first, in order, then `WHERE`
 filter values. `NULL` and `current_timestamp` inline as in §3.2.
 
-### 3.4 Delete
+### 3.5 Delete
 
 ```
 from <table>
@@ -166,7 +192,29 @@ DELETE FROM <table>
 WHERE <filter...>;
 ```
 
-### 3.5 Table DDL
+### 3.6 Union
+
+```
+<statement>
+| union [all]
+<statement>
+```
+
+The `union` keyword chains two statements to combine their result sets. When
+`all` follows `union`, duplicate rows are preserved (`UNION ALL`). Without `all`,
+duplicates are removed (`UNION`). Both sides must be valid PipeQL statements
+(pipelines, inserts, upserts, or unions). Compiles to:
+
+```
+<left SQL>
+UNION [ALL]
+<right SQL>;
+```
+
+**Parameter order:** Parameters from the left statement come first, followed by
+parameters from the right statement.
+
+### 3.7 Table DDL
 
 ```
 table <name> [
@@ -219,6 +267,7 @@ and_expression   ::= not_expression (('and') not_expression)*
 not_expression   ::= 'not' not_expression | comparison
 comparison       ::= additive (('=='|'='|'!='|'<'|'<='|'>'|'>='|'<>') additive)?
                    | additive ['not'] 'in' '[' expression (',' expression)* ']'
+                   | additive ['not'] 'in' '(' pipeline ')'
                    | additive 'is' ['not'] 'null'
 additive         ::= multiplicative (('+'|'-') multiplicative)*
 multiplicative   ::= unary (('*'|'/') unary)*
@@ -231,7 +280,7 @@ function_call    ::= identifier '(' expression (',' expression)* ')'
 
 - `=` and `==` are equivalent equality operators (both compile to SQL `=`).
 - `and` binds tighter than `or`; `not` binds tighter than both.
-- `in` accepts a bracket list of expressions.
+- `in` accepts a bracket list of expressions or a subquery (`in (from ...)`).
 - `*` (star) is a valid primary for `select [*]` and `count(*)`.
 - Column references may be dotted (`users.id`, `u.profile.name`); JSON-ish
   paths are codegen-mapped per dialect (e.g. Postgres `->>`).
@@ -254,6 +303,7 @@ function_call    ::= identifier '(' expression (',' expression)* ')'
 | Statement | SQL shape                                                  |
 | --------- | ---------------------------------------------------------- |
 | insert    | `INSERT INTO t (c1, c2) VALUES (p1, p2)` + `RETURNING *` (postgres) |
+| upsert   | `INSERT INTO t (...) VALUES (...) ON CONFLICT (...) DO UPDATE SET ...` (or `ON DUPLICATE KEY UPDATE` for MySQL) |
 | update    | `UPDATE t SET c1 = p1, ... WHERE <filters>` (SET before WHERE) |
 | delete    | `DELETE FROM t WHERE <filters>`                            |
 | table     | `CREATE TABLE IF NOT EXISTS t (col type constraints, ...)` |
@@ -278,6 +328,7 @@ same `$N`. Question-style dialects emit one placeholder per occurrence.
 - PipeQL `and`/`or`/`not` → SQL `AND`/`OR`/`NOT`
 - PipeQL `is [not] null` → SQL `IS [NOT] NULL`
 - PipeQL `in [...]` → SQL `IN (...)`
+- PipeQL `in (from ...)` → SQL `IN (SELECT ...)`
 - JSON dotted path → dialect accessor (Postgres `->>`, SQLite `->>`/`json_extract`,
   DuckDB `->>`/`get_json_string`, MySQL `JSON_UNQUOTE(JSON_EXTRACT(...))`)
 - Aggregate functions (`sum`, `count`, `min`, `max`, `avg`) → SQL same-name.
@@ -364,7 +415,7 @@ Errors are rendered consistently across the CLI, WASM, Python, and C APIs.
 ## 9. Formal grammar (EBNF)
 
 ```
-statement    := NEWLINE* (pipeline | insert_stmt | table_stmt) EOF
+statement    := NEWLINE* (pipeline | insert_stmt | upsert_stmt | union_stmt | table_stmt) EOF
 pipeline     := source (SEP step)*
 source       := 'from' IDENT (IDENT)?
 SEP          := ('|' | NEWLINE)+
@@ -386,6 +437,10 @@ skip_step    := 'skip' NUMBER
 update_step  := 'update' '[' (assignment (',' assignment)*)? ']'
 delete_step  := 'delete'
 insert_stmt  := 'into' IDENT SEP 'insert' '[' (assignment (',' assignment)*)? ']'
+upsert_stmt  := 'into' IDENT SEP 'upsert' '[' (assignment (',' assignment)*)? ']'
+               SEP 'conflict' '[' (IDENT (',' IDENT)*)? ']'
+               SEP 'do' 'update' '[' (assignment (',' assignment)*)? ']'
+union_stmt   := statement SEP ('union' ('all')?) SEP statement
 table_stmt   := 'table' IDENT '[' (column_def (',' column_def)*)? ']'
 column_def   := IDENT column_type column_modifier*
 column_type  := 'int' | 'integer' | 'float' | 'real' | 'string' | 'text'
@@ -400,6 +455,7 @@ Semantic constraints not captured in the grammar:
 - In a mutation pipeline the `update`/`delete` step is terminal and every
   preceding step must be `filter`.
 - `update`/`delete` may not be followed by any step.
+- `union` chains two statements; both must be valid PipeQL statements.
 
 ## 10. Non-functional requirements (measured)
 

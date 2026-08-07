@@ -191,6 +191,20 @@ impl Parser {
 
         // Parse pipe steps
         while self.is_pipe_separator() {
+            // Peek ahead to check if this pipe is followed by 'union' or 'union all'
+            // If so, stop parsing steps and let parse_statement handle the union
+            let saved_pos = self.pos;
+            while matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline) {
+                self.advance();
+            }
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::Union | TokenKind::All) {
+                // Backtrack - don't consume this pipe separator
+                self.pos = saved_pos;
+                break;
+            }
+            self.pos = saved_pos;
+
             self.parse_pipe_op().map_err(|e| vec![e])?;
             self.skip_newlines();
 
@@ -205,7 +219,10 @@ impl Parser {
         // Reject any leftover tokens after the last step so that malformed
         // input is never silently truncated (e.g. `filter status = 'x'`
         // missing the comparison must still surface as an error).
-        if !matches!(self.peek(), TokenKind::Eof) {
+        if !matches!(
+            self.peek(),
+            TokenKind::Eof | TokenKind::Pipe | TokenKind::Newline
+        ) {
             return Err(vec![ParseError {
                 message: format!("Unexpected token '{}' after pipeline", self.peek()),
                 span: self.peek_token().span,
@@ -222,14 +239,14 @@ impl Parser {
         })
     }
 
-    /// Parse a full statement: a read/mutation pipeline, an `insert`, or a
-    /// `table` DDL declaration.
+    /// Parse a full statement: a read/mutation pipeline, an `insert`/`upsert`, a
+    /// `table` DDL declaration, or a `union` combination.
     pub fn parse_statement(&mut self) -> Result<Statement, Vec<ParseError>> {
         self.skip_newlines();
 
-        match self.peek() {
+        let stmt = match self.peek() {
             TokenKind::From => self.parse_pipeline().map(Statement::Pipeline),
-            TokenKind::Into => self.parse_insert(),
+            TokenKind::Into => self.parse_into_statement(),
             TokenKind::Table => self.parse_create_table(),
             TokenKind::Eof => Err(vec![ParseError {
                 message: "Unexpected end of input".to_string(),
@@ -249,6 +266,66 @@ impl Parser {
                         .to_string(),
                 ),
             }]),
+        }?;
+
+        // Check for union chaining: `<stmt> | union [all] <stmt>`
+        self.skip_newlines();
+        if self.is_pipe_separator() {
+            let saved_pos = self.pos;
+            // Consume pipe/newlines
+            while matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline) {
+                self.advance();
+            }
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::Union) {
+                let union_token = self.advance(); // consume 'union'
+                let all = if matches!(self.peek(), TokenKind::All) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                self.skip_newlines();
+                // Parse the right-hand statement (recursive)
+                let right = self.parse_statement()?;
+                let span = Span::new(union_token.span.start, self.peek_token().span.start);
+                return Ok(Statement::Union(UnionStmt {
+                    left: Box::new(stmt),
+                    right: Box::new(right),
+                    all,
+                    span,
+                }));
+            } else {
+                // Not a union — backtrack
+                self.pos = saved_pos;
+            }
+        }
+
+        Ok(stmt)
+    }
+
+    /// Dispatch `into` to either `insert` or `upsert`.
+    fn parse_into_statement(&mut self) -> Result<Statement, Vec<ParseError>> {
+        // Look ahead to decide: after `into <table> |`, is the next keyword
+        // `insert` or `upsert`?
+        let saved_pos = self.pos;
+        self.advance(); // consume 'into'
+        let _table = self.expect_ident().map_err(|e| vec![e])?;
+
+        // Consume pipe separator
+        while matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline) {
+            self.advance();
+        }
+        self.skip_newlines();
+
+        let is_upsert = matches!(self.peek(), TokenKind::Upsert);
+        // Restore position and parse the correct statement type
+        self.pos = saved_pos;
+
+        if is_upsert {
+            self.parse_upsert()
+        } else {
+            self.parse_insert()
         }
     }
 
@@ -271,6 +348,62 @@ impl Parser {
         Ok(Statement::Insert(InsertStmt {
             table,
             assignments,
+            comments: std::mem::take(&mut self.comments),
+            span,
+        }))
+    }
+
+    fn parse_upsert(&mut self) -> Result<Statement, Vec<ParseError>> {
+        let token = self.advance(); // consume 'into'
+        let span_start = token.span.start;
+
+        let table = self.expect_ident().map_err(|e| vec![e])?;
+        self.parse_pipe_op().map_err(|e| vec![e])?;
+        self.skip_newlines();
+
+        self.expect(&TokenKind::Upsert).map_err(|e| vec![e])?;
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        // Parse `| conflict [col1, col2, ...]`
+        self.parse_pipe_op().map_err(|e| vec![e])?;
+        self.skip_newlines();
+        self.expect(&TokenKind::Conflict).map_err(|e| vec![e])?;
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let mut conflict_columns = Vec::new();
+        self.skip_newlines();
+        if !matches!(self.peek(), TokenKind::RBracket) {
+            conflict_columns.push(self.expect_ident().map_err(|e| vec![e])?);
+            while matches!(self.peek(), TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+                if matches!(self.peek(), TokenKind::RBracket) {
+                    break;
+                }
+                conflict_columns.push(self.expect_ident().map_err(|e| vec![e])?);
+            }
+        }
+        self.skip_newlines();
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        // Parse `| do update [...]`
+        self.parse_pipe_op().map_err(|e| vec![e])?;
+        self.skip_newlines();
+        self.expect(&TokenKind::Do).map_err(|e| vec![e])?;
+        self.expect(&TokenKind::Update).map_err(|e| vec![e])?;
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let do_update = self.parse_assignment_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        self.skip_newlines();
+        self.reject_leftover()?;
+        let span = Span::new(span_start, self.peek_token().span.start);
+        Ok(Statement::Upsert(UpsertStmt {
+            table,
+            assignments,
+            conflict_columns,
+            do_update,
             comments: std::mem::take(&mut self.comments),
             span,
         }))
@@ -866,6 +999,52 @@ impl Parser {
                 self.advance(); // consume 'in' (or 'not')
                 if negated {
                     self.advance(); // consume 'in'
+                }
+                // Check if this is a subquery: `in (from ...)`
+                if matches!(self.peek(), TokenKind::LParen) {
+                    // Peek ahead to see if `from` follows the `(`
+                    if matches!(
+                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                        Some(TokenKind::From)
+                    ) {
+                        self.advance(); // consume '('
+                                        // Parse the inner pipeline as a subquery
+                        let source = self.parse_table_source().map_err(|e| {
+                            e.into_iter().next().unwrap_or(ParseError {
+                                message: "Failed to parse subquery source".to_string(),
+                                span: Span::new(0, 0),
+                                suggestion: None,
+                            })
+                        })?;
+                        let mut steps = Vec::new();
+                        while self.is_pipe_separator() {
+                            self.parse_pipe_op()?;
+                            self.skip_newlines();
+                            if matches!(self.peek(), TokenKind::RParen | TokenKind::Eof) {
+                                break;
+                            }
+                            let step = self.parse_step().map_err(|e| {
+                                e.into_iter().next().unwrap_or(ParseError {
+                                    message: "Failed to parse subquery step".to_string(),
+                                    span: Span::new(0, 0),
+                                    suggestion: None,
+                                })
+                            })?;
+                            steps.push(step);
+                        }
+                        self.expect(&TokenKind::RParen)?;
+                        let subquery = Pipeline {
+                            source,
+                            steps,
+                            comments: Vec::new(),
+                        };
+                        lhs = Expr::InSubquery {
+                            expr: Box::new(lhs),
+                            subquery: Box::new(subquery),
+                            negated,
+                        };
+                        continue;
+                    }
                 }
                 let list = self.parse_in_list()?;
                 lhs = Expr::InList {

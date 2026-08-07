@@ -53,6 +53,29 @@ await compile("from t", "postgres");
   const ddl = await compile("table notes [id int primary auto]", "sqlite");
   assert.equal(ddl.statementType, "create_table");
   assert.equal(ddl.isMutation, false);
+
+  const upsert = await compile(
+    "into users | upsert [name = $name, email = $email] | conflict [email] | do update [name = $name]",
+    "postgres",
+  );
+  assert.equal(upsert.statementType, "upsert");
+  assert.equal(upsert.isMutation, true);
+  assert.ok(upsert.sql.includes("ON CONFLICT (email) DO UPDATE SET name = $3"));
+
+  const union = await compile(
+    "from active_users | select [id, name] | union from archived_users | select [id, name]",
+    "postgres",
+  );
+  assert.equal(union.statementType, "union");
+  assert.equal(union.isMutation, false);
+  assert.ok(union.sql.includes("UNION"));
+  assert.ok(!union.sql.includes("UNION ALL"));
+
+  const unionAll = await compile(
+    "from active_users | select [id, name] | union all from archived_users | select [id, name]",
+    "postgres",
+  );
+  assert.ok(unionAll.sql.includes("UNION ALL"));
 }
 
 // 3. Tagged template with interpolation -> parameters, never inline
@@ -63,6 +86,17 @@ await compile("from t", "postgres");
   assert.ok(sql.includes("plan = $2"));
   assert.deepEqual(params, ["p0", "p1"]);
   assert.deepEqual(values, [18, "pro"]);
+}
+
+// 3b. Subquery (IN subquery)
+{
+  const result = await compile(
+    "from orders | filter customer_id in (from customers | filter region == 'EU' | select [id])",
+    "postgres",
+  );
+  assert.ok(result.sql.includes("IN (SELECT id FROM customers"));
+  assert.ok(result.sql.includes("WHERE (region = $1)"));
+  assert.deepEqual(result.params, ["EU"]);
 }
 
 // 4. Catalog validation catches unknown columns
