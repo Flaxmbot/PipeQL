@@ -1,0 +1,30 @@
+{
+  "name": "tree-sitter-pipeql",
+  "version": "1.0.0",
+  "description": "Tree-sitter grammar for PipeQL - pipelined & injection-safe polyglot query language",
+  "license": "MIT",
+  "type": "module",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "files": [
+    "grammar.js",
+    "src",
+    "binding.gyp",
+    "bindings"
+  ],
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "keywords": [
+    "tree-sitter",
+    "parser",
+    "pipeql",
+    "sql",
+    "query-language"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

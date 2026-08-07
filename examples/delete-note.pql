@@ -1,0 +1,4 @@
+-- Archive a note: delete rows matching the filter.
+from notes
+| filter id == $id or is_archived == 1
+| delete

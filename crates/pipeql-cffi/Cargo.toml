@@ -1,0 +1,15 @@
+[package]
+name = "pipeql-cffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C-FFI bindings for PipeQL (libpipeql) - exposed to C, C++, Go, and other FFI languages"
+publish = false
+
+[lib]
+name = "pipeql_cffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+pipeql-core = { workspace = true, features = ["serde"] }
+serde_json.workspace = true

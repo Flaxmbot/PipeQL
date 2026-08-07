@@ -1,0 +1,111 @@
+{
+  "name": "vscode-pipeql",
+  "displayName": "PipeQL",
+  "description": "PipeQL language support - pipelined & injection-safe polyglot query language",
+  "version": "1.0.0",
+  "publisher": "pipeql",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets"
+  ],
+  "keywords": [
+    "pipeql",
+    "pql",
+    "sql",
+    "postgres",
+    "sqlite",
+    "duckdb",
+    "mysql",
+    "query"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:pipeql"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pipeql",
+        "aliases": [
+          "PipeQL",
+          "pipeql"
+        ],
+        "extensions": [
+          ".pql",
+          ".pipeql"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pipeql",
+        "scopeName": "source.pipeql",
+        "path": "./syntaxes/pipeql.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "pipeql",
+        "path": "./snippets/pipeql.json"
+      }
+    ],
+    "configuration": {
+      "title": "PipeQL",
+      "properties": {
+        "pipeql.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the PipeQL language server (diagnostics, completion, hover)."
+        },
+        "pipeql.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the pipeql-lsp executable. Empty uses the bundled binary or searches PATH."
+        },
+        "pipeql.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the pipeql CLI executable used by 'PipeQL: Compile Query to SQL'."
+        },
+        "pipeql.defaultDialect": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "sqlite",
+            "duckdb",
+            "mysql"
+          ],
+          "default": "postgres",
+          "description": "Default target SQL dialect used for diagnostics and previews."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "pipeql.compileToSql",
+        "title": "PipeQL: Compile Query to SQL",
+        "category": "PipeQL"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

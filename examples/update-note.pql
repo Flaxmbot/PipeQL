@@ -1,0 +1,8 @@
+-- Update one note: SET values bind before WHERE filter values.
+from notes
+| filter id == $id and is_archived == 0
+| update [
+    title = $title,
+    is_pinned = 1,
+    updated_at = CURRENT_TIMESTAMP
+  ]

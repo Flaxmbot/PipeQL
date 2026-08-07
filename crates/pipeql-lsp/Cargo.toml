@@ -1,0 +1,18 @@
+[package]
+name = "pipeql-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Language Server for PipeQL (LSP protocol) - diagnostics, completion, and formatting"
+publish = false
+
+[[bin]]
+name = "pipeql-lsp"
+path = "src/main.rs"
+
+[dependencies]
+pipeql-core.workspace = true
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+serde.workspace = true
+serde_json.workspace = true

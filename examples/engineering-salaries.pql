@@ -1,0 +1,6 @@
+-- Top engineering salaries.
+-- String literal 'engineering' and $min_salary both become bind parameters.
+from employees
+| filter department == 'engineering' and salary >= $min_salary
+| sort [salary desc]
+| take 50

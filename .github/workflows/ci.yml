@@ -1,0 +1,69 @@
+name: PipeQL CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-rust:
+    name: Rust Compiler Core Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Cargo Tests
+        run: cargo test --workspace
+
+  test-js:
+    name: JavaScript SDK & WASM Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build WASM & Run JS Tests
+        run: |
+          wasm-pack build crates/pipeql-wasm --target web --out-dir ../../js/dist
+          cd js
+          npm ci
+          npm test
+
+  test-python:
+    name: Python Binding Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Wheel & Run Python Tests
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest
+          maturin develop -m crates/pipeql-python/Cargo.toml
+          pytest python/tests/
+
+  test-go:
+    name: Go CGO Binding Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build CFFI library & Run Go Tests
+        run: |
+          cargo build --release -p pipeql-cffi
+          sudo cp target/release/libpipeql_cffi.so /usr/local/lib/ || true
+          sudo ldconfig || true
+          cd go
+          go test -v ./...

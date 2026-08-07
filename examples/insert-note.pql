@@ -1,0 +1,8 @@
+-- Insert a new note. Postgres appends RETURNING * for generated keys.
+into notes
+| insert [
+    title = $title,
+    content = $content,
+    category = 'Personal',
+    is_pinned = 0
+  ]

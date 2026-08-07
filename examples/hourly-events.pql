@@ -1,0 +1,6 @@
+-- Hourly signup/login volume since a cutoff.
+from events
+| filter event_type in ['login', 'signup'] and occurred_at >= $since
+| derive [hour = extract_hour(occurred_at)]
+| group [hour] (cnt = count(*))
+| select [hour, cnt]

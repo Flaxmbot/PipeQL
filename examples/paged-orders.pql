@@ -1,0 +1,6 @@
+-- Paged order listings, excluding cancelled orders.
+from orders
+| filter status != 'cancelled'
+| select [order_id, customer_id, amount as total]
+| skip 20
+| take 25

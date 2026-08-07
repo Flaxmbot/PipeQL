@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pipeql-core",
+    "crates/pipeql-cli",
+    "crates/pipeql-cffi",
+    "crates/pipeql-wasm",
+    "crates/pipeql-python",
+    "crates/pipeql-lsp",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Flaxmbot/PipeQL"
+
+[workspace.dependencies]
+pipeql-core = { path = "crates/pipeql-core" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

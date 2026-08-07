@@ -1,0 +1,1270 @@
+use std::fmt;
+
+use crate::ast::*;
+use crate::lexer::{Lexer, Token, TokenKind};
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub message: String,
+    pub span: Span,
+    /// Optional actionable suggestion for the user, e.g. "Did you mean `==`?"
+    pub suggestion: Option<String>,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Parse error at {}..{}: {}",
+            self.span.start, self.span.end, self.message
+        )?;
+        if let Some(s) = &self.suggestion {
+            write!(f, "\n  hint: {s}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+    eof_token: Token,
+    comments: Vec<Comment>,
+}
+
+impl Parser {
+    pub fn new(source: &str) -> Result<Self, Vec<ParseError>> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|e| ParseError {
+                    message: e.message,
+                    span: e.span,
+                    suggestion: e.suggestion,
+                })
+                .collect::<Vec<_>>()
+        })?;
+
+        // Split comment tokens out of the main token stream so they do not
+        // interfere with parsing, while preserving them (lossless AST).
+        let mut comments = Vec::new();
+        let mut tokens: Vec<Token> = tokens
+            .into_iter()
+            .filter_map(|t| match t.kind {
+                TokenKind::Comment(text) => {
+                    comments.push(Comment { text, span: t.span });
+                    None
+                }
+                _ => Some(t),
+            })
+            .collect();
+
+        // The lexer always ends with an Eof token; keep it as the last element.
+        if !matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)) {
+            tokens.push(Token::new(
+                TokenKind::Eof,
+                Span::new(source.len(), source.len()),
+            ));
+        }
+
+        let eof_token = Token::new(TokenKind::Eof, Span::new(source.len(), source.len()));
+        Ok(Self {
+            tokens,
+            pos: 0,
+            eof_token,
+            comments,
+        })
+    }
+
+    fn peek(&self) -> &TokenKind {
+        self.tokens
+            .get(self.pos)
+            .map(|t| &t.kind)
+            .unwrap_or(&self.eof_token.kind)
+    }
+
+    fn peek_token(&self) -> &Token {
+        self.tokens.get(self.pos).unwrap_or(&self.eof_token)
+    }
+
+    fn advance(&mut self) -> Token {
+        let token = self
+            .tokens
+            .get(self.pos)
+            .cloned()
+            .unwrap_or_else(|| self.eof_token.clone());
+        self.pos += 1;
+        token
+    }
+
+    fn expect(&mut self, expected: &TokenKind) -> Result<Token, ParseError> {
+        let token = self.advance();
+        if &token.kind == expected {
+            Ok(token)
+        } else {
+            Err(ParseError {
+                message: format!("Expected '{expected}', found '{}'", token.kind),
+                span: token.span,
+                suggestion: self.closing_suggestion(expected, &token.kind),
+            })
+        }
+    }
+
+    fn closing_suggestion(&self, expected: &TokenKind, found: &TokenKind) -> Option<String> {
+        match (expected, found) {
+            (TokenKind::RBracket, _) => {
+                Some("Did you forget to close the list with `]`?".to_string())
+            }
+            (TokenKind::RParen, _) => {
+                Some("Did you forget to close the parenthesis with `)`?".to_string())
+            }
+            (TokenKind::LBracket, _) => {
+                Some("Did you forget to open the list with `[`?".to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn expect_ident(&mut self) -> Result<Ident, ParseError> {
+        let token = self.advance();
+        match &token.kind {
+            TokenKind::Ident(name) => Ok(Ident::new(name.clone(), token.span)),
+            other => Err(ParseError {
+                message: format!("Expected identifier, found '{}'", token.kind),
+                span: token.span,
+                suggestion: self.ident_suggestion(other),
+            }),
+        }
+    }
+
+    fn ident_suggestion(&self, found: &TokenKind) -> Option<String> {
+        match found {
+            TokenKind::Eq => Some(
+                "`==` must come between two expressions, e.g. `filter status == 'active'`"
+                    .to_string(),
+            ),
+            TokenKind::Filter => Some("Keyword `filter` cannot be used as a name here".to_string()),
+            _ => None,
+        }
+    }
+
+    fn skip_newlines(&mut self) {
+        while matches!(self.peek(), TokenKind::Newline) {
+            self.advance();
+        }
+    }
+
+    fn is_pipe_separator(&self) -> bool {
+        matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline)
+    }
+
+    fn parse_pipe_op(&mut self) -> Result<(), ParseError> {
+        // Consume ALL consecutive separators (| and newlines) as a single step
+        // separator. This supports `\n | step` and `| \n step` styles.
+        let mut consumed = false;
+        while matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline) {
+            self.advance();
+            consumed = true;
+        }
+        if consumed {
+            Ok(())
+        } else {
+            Err(ParseError {
+                message: "Expected pipe operator '|' or newline".to_string(),
+                span: self.peek_token().span,
+                suggestion: Some("Separate pipeline steps with `|` or a newline".to_string()),
+            })
+        }
+    }
+
+    pub fn parse_pipeline(&mut self) -> Result<Pipeline, Vec<ParseError>> {
+        self.skip_newlines();
+
+        // Parse table source
+        let source = self.parse_table_source()?;
+
+        let mut steps = Vec::new();
+
+        // Parse pipe steps
+        while self.is_pipe_separator() {
+            self.parse_pipe_op().map_err(|e| vec![e])?;
+            self.skip_newlines();
+
+            if matches!(self.peek(), TokenKind::Eof) {
+                break;
+            }
+
+            let step = self.parse_step()?;
+            steps.push(step);
+        }
+
+        // Reject any leftover tokens after the last step so that malformed
+        // input is never silently truncated (e.g. `filter status = 'x'`
+        // missing the comparison must still surface as an error).
+        if !matches!(self.peek(), TokenKind::Eof) {
+            return Err(vec![ParseError {
+                message: format!("Unexpected token '{}' after pipeline", self.peek()),
+                span: self.peek_token().span,
+                suggestion: Some(
+                    "Remove the extra text or separate it into another step with `|`".to_string(),
+                ),
+            }]);
+        }
+
+        Ok(Pipeline {
+            source,
+            steps,
+            comments: std::mem::take(&mut self.comments),
+        })
+    }
+
+    /// Parse a full statement: a read/mutation pipeline, an `insert`, or a
+    /// `table` DDL declaration.
+    pub fn parse_statement(&mut self) -> Result<Statement, Vec<ParseError>> {
+        self.skip_newlines();
+
+        match self.peek() {
+            TokenKind::From => self.parse_pipeline().map(Statement::Pipeline),
+            TokenKind::Into => self.parse_insert(),
+            TokenKind::Table => self.parse_create_table(),
+            TokenKind::Eof => Err(vec![ParseError {
+                message: "Unexpected end of input".to_string(),
+                span: self.peek_token().span,
+                suggestion: Some(
+                    "A PipeQL statement starts with `from`, `into`, or `table`".to_string(),
+                ),
+            }]),
+            _ => Err(vec![ParseError {
+                message: format!(
+                    "Expected 'from', 'into', or 'table' to start a statement, found '{}'",
+                    self.peek()
+                ),
+                span: self.peek_token().span,
+                suggestion: Some(
+                    "Statements begin with `from <table>`, `into <table>`, or `table <name>`"
+                        .to_string(),
+                ),
+            }]),
+        }
+    }
+
+    fn parse_insert(&mut self) -> Result<Statement, Vec<ParseError>> {
+        let token = self.advance(); // consume 'into'
+        let span_start = token.span.start;
+
+        let table = self.expect_ident().map_err(|e| vec![e])?;
+        self.parse_pipe_op().map_err(|e| vec![e])?;
+        self.skip_newlines();
+
+        self.expect(&TokenKind::Insert).map_err(|e| vec![e])?;
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        self.skip_newlines();
+        self.reject_leftover()?;
+        let span = Span::new(span_start, self.peek_token().span.start);
+        Ok(Statement::Insert(InsertStmt {
+            table,
+            assignments,
+            comments: std::mem::take(&mut self.comments),
+            span,
+        }))
+    }
+
+    fn parse_create_table(&mut self) -> Result<Statement, Vec<ParseError>> {
+        let token = self.advance(); // consume 'table'
+        let span_start = token.span.start;
+
+        let name = self.expect_ident().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+
+        let mut columns = Vec::new();
+        self.skip_newlines();
+        if !matches!(self.peek(), TokenKind::RBracket) {
+            columns.push(self.parse_column_def().map_err(|e| vec![e])?);
+            while matches!(self.peek(), TokenKind::Comma) {
+                self.advance(); // consume comma
+                self.skip_newlines();
+                if matches!(self.peek(), TokenKind::RBracket) {
+                    break;
+                }
+                columns.push(self.parse_column_def().map_err(|e| vec![e])?);
+            }
+        }
+        self.skip_newlines();
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        self.skip_newlines();
+        self.reject_leftover()?;
+        let span = Span::new(span_start, self.peek_token().span.start);
+        Ok(Statement::CreateTable(CreateTableStmt {
+            name,
+            columns,
+            comments: std::mem::take(&mut self.comments),
+            span,
+        }))
+    }
+
+    fn parse_column_def(&mut self) -> Result<ColumnDef, ParseError> {
+        let name = self.expect_ident()?;
+        let ty = self.parse_column_type()?;
+
+        let mut modifiers = Vec::new();
+        loop {
+            match self.peek() {
+                TokenKind::Not => {
+                    self.advance(); // consume 'not'
+                    self.expect(&TokenKind::Null)?;
+                    modifiers.push(ColumnModifier::NotNull);
+                }
+                TokenKind::Ident(name) => match name.to_lowercase().as_str() {
+                    "primary" => {
+                        self.advance();
+                        modifiers.push(ColumnModifier::PrimaryKey);
+                    }
+                    "auto" => {
+                        self.advance();
+                        modifiers.push(ColumnModifier::AutoIncrement);
+                    }
+                    "unique" => {
+                        self.advance();
+                        modifiers.push(ColumnModifier::Unique);
+                    }
+                    "default" => {
+                        self.advance();
+                        let expr = self.parse_expr()?;
+                        modifiers.push(ColumnModifier::Default(expr));
+                    }
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+
+        Ok(ColumnDef {
+            name,
+            ty,
+            modifiers,
+        })
+    }
+
+    fn parse_column_type(&mut self) -> Result<ColumnType, ParseError> {
+        let token = self.advance();
+        match &token.kind {
+            TokenKind::Ident(name) => match name.to_lowercase().as_str() {
+                "int" | "integer" => Ok(ColumnType::Integer),
+                "float" | "real" => Ok(ColumnType::Float),
+                "string" | "text" => Ok(ColumnType::String),
+                "bool" | "boolean" => Ok(ColumnType::Bool),
+                "timestamp" | "datetime" => Ok(ColumnType::Timestamp),
+                other => Err(ParseError {
+                    message: format!("Unknown column type '{other}'"),
+                    span: token.span,
+                    suggestion: Some(
+                        "Supported types: int, float, string, bool, timestamp".to_string(),
+                    ),
+                }),
+            },
+            other => Err(ParseError {
+                message: format!("Expected column type after column name, found '{other}'"),
+                span: token.span,
+                suggestion: Some(
+                    "Every column needs a type, e.g. `id int primary auto`".to_string(),
+                ),
+            }),
+        }
+    }
+
+    fn reject_leftover(&self) -> Result<(), Vec<ParseError>> {
+        if !matches!(self.peek(), TokenKind::Eof) {
+            return Err(vec![ParseError {
+                message: format!("Unexpected token '{}' after statement", self.peek()),
+                span: self.peek_token().span,
+                suggestion: Some(
+                    "Remove the extra text or separate it into another statement".to_string(),
+                ),
+            }]);
+        }
+        Ok(())
+    }
+
+    fn parse_table_source(&mut self) -> Result<TableSource, Vec<ParseError>> {
+        self.skip_newlines();
+
+        if !matches!(self.peek(), TokenKind::From) {
+            return Err(vec![ParseError {
+                message: "Expected 'from' keyword to start pipeline".to_string(),
+                span: self.peek_token().span,
+                suggestion: Some("Every pipeline must begin with `from <table>`".to_string()),
+            }]);
+        }
+        self.advance(); // consume 'from'
+
+        let name = self.expect_ident().map_err(|e| vec![e])?;
+        let alias = if matches!(self.peek(), TokenKind::As) {
+            self.advance();
+            Some(self.expect_ident().map_err(|e| vec![e])?)
+        } else if matches!(self.peek(), TokenKind::Ident(_)) {
+            Some(self.expect_ident().map_err(|e| vec![e])?)
+        } else {
+            None
+        };
+
+        Ok(TableSource { name, alias })
+    }
+
+    fn parse_step(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        match self.peek() {
+            TokenKind::Filter => self.parse_filter(),
+            TokenKind::Select => self.parse_select(),
+            TokenKind::Derive => self.parse_derive(),
+            TokenKind::Join => self.parse_join(),
+            TokenKind::Group => self.parse_group(),
+            TokenKind::Sort => self.parse_sort(),
+            TokenKind::Take => self.parse_take(),
+            TokenKind::Skip => self.parse_skip(),
+            TokenKind::Update => self.parse_update(),
+            TokenKind::Delete => self.parse_delete(),
+            TokenKind::Eof => Err(vec![ParseError {
+                message: "Unexpected end of input".to_string(),
+                span: self.peek_token().span,
+                suggestion: Some("Expected a pipeline step such as `filter`, `select`, `derive`, or `take` after `|`".to_string()),
+            }]),
+            _ => Err(vec![ParseError {
+                message: format!("Expected pipeline step, found '{}'", self.peek()),
+                span: self.peek_token().span,
+                suggestion: Some("Supported steps: filter, select, derive, join, group, sort, take, skip, update, delete".to_string()),
+            }]),
+        }
+    }
+
+    fn parse_update(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'update'
+        let span_start = token.span.start;
+
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Update {
+            assignments,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_delete(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'delete'
+
+        Ok(PipelineStep::Delete {
+            span: Span::new(token.span.start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_filter(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'filter'
+        let span_start = token.span.start;
+
+        let expr = self.parse_expr().map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Filter {
+            expr,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_select(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'select'
+        let span_start = token.span.start;
+
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let columns = self.parse_select_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Select {
+            columns,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_select_list(&mut self) -> Result<Vec<SelectItem>, ParseError> {
+        let mut items = Vec::new();
+
+        self.skip_newlines();
+        if matches!(self.peek(), TokenKind::RBracket) {
+            return Ok(items);
+        }
+
+        items.push(self.parse_select_item()?);
+
+        while matches!(self.peek(), TokenKind::Comma) {
+            self.advance(); // consume comma
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::RBracket) {
+                break;
+            }
+            items.push(self.parse_select_item()?);
+        }
+
+        self.skip_newlines();
+        Ok(items)
+    }
+
+    fn parse_select_item(&mut self) -> Result<SelectItem, ParseError> {
+        let expr = self.parse_expr()?;
+        let alias = if matches!(self.peek(), TokenKind::As) {
+            self.advance(); // consume 'as'
+            Some(self.expect_ident()?)
+        } else {
+            None
+        };
+        Ok(SelectItem { expr, alias })
+    }
+
+    fn parse_derive(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'derive'
+        let span_start = token.span.start;
+
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Derive {
+            assignments,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_join(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'join'
+        let span_start = token.span.start;
+
+        // Optional join type
+        let join_type = match self.peek() {
+            TokenKind::Left => {
+                self.advance();
+                JoinType::Left
+            }
+            TokenKind::Right => {
+                self.advance();
+                JoinType::Right
+            }
+            TokenKind::Full => {
+                self.advance();
+                JoinType::Full
+            }
+            TokenKind::Inner => {
+                self.advance();
+                JoinType::Inner
+            }
+            _ => JoinType::Inner,
+        };
+
+        let table = self.expect_ident().map_err(|e| vec![e])?;
+
+        // Optional alias (`as alias` or a bare identifier, per the grammar).
+        let alias = if matches!(self.peek(), TokenKind::As) {
+            self.advance();
+            Some(self.expect_ident().map_err(|e| vec![e])?)
+        } else if matches!(self.peek(), TokenKind::Ident(_)) {
+            Some(self.expect_ident().map_err(|e| vec![e])?)
+        } else {
+            None
+        };
+
+        self.expect(&TokenKind::On).map_err(|e| vec![e])?;
+        let on = self.parse_expr().map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Join {
+            join_type,
+            table,
+            alias,
+            on,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_group(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'group'
+        let span_start = token.span.start;
+
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let columns = self.parse_expr_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        self.expect(&TokenKind::LParen).map_err(|e| vec![e])?;
+        let aggregates = self.parse_aggregate_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RParen).map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Group {
+            columns,
+            aggregates,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_sort(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'sort'
+        let span_start = token.span.start;
+
+        self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
+        let items = self.parse_sort_list().map_err(|e| vec![e])?;
+        self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
+
+        Ok(PipelineStep::Sort {
+            items,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_take(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'take'
+        let span_start = token.span.start;
+
+        let count_token = self.advance();
+        let count = match &count_token.kind {
+            TokenKind::Integer(v) => *v,
+            _ => {
+                return Err(vec![ParseError {
+                    message: format!(
+                        "Expected integer after 'take', found '{}'",
+                        count_token.kind
+                    ),
+                    span: count_token.span,
+                    suggestion: Some(
+                        "`take` requires a positive integer, e.g. `take 10`".to_string(),
+                    ),
+                }]);
+            }
+        };
+
+        Ok(PipelineStep::Take {
+            count,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_skip(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
+        let token = self.advance(); // consume 'skip'
+        let span_start = token.span.start;
+
+        let count_token = self.advance();
+        let count = match &count_token.kind {
+            TokenKind::Integer(v) => *v,
+            _ => {
+                return Err(vec![ParseError {
+                    message: format!(
+                        "Expected integer after 'skip', found '{}'",
+                        count_token.kind
+                    ),
+                    span: count_token.span,
+                    suggestion: Some(
+                        "`skip` requires a positive integer, e.g. `skip 5`".to_string(),
+                    ),
+                }]);
+            }
+        };
+
+        Ok(PipelineStep::Skip {
+            count,
+            span: Span::new(span_start, self.peek_token().span.start),
+        })
+    }
+
+    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut exprs = Vec::new();
+
+        self.skip_newlines();
+        if matches!(self.peek(), TokenKind::RBracket) || matches!(self.peek(), TokenKind::Eof) {
+            return Ok(exprs);
+        }
+
+        exprs.push(self.parse_expr()?);
+
+        while matches!(self.peek(), TokenKind::Comma) {
+            self.advance(); // consume comma
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::RBracket) {
+                break;
+            }
+            exprs.push(self.parse_expr()?);
+        }
+
+        self.skip_newlines();
+        Ok(exprs)
+    }
+
+    fn parse_assignment_list(&mut self) -> Result<Vec<Assignment>, ParseError> {
+        let mut assignments = Vec::new();
+
+        self.skip_newlines();
+        if matches!(self.peek(), TokenKind::RBracket) {
+            return Ok(assignments);
+        }
+
+        assignments.push(self.parse_assignment()?);
+
+        while matches!(self.peek(), TokenKind::Comma) {
+            self.advance(); // consume comma
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::RBracket) {
+                break;
+            }
+            assignments.push(self.parse_assignment()?);
+        }
+
+        self.skip_newlines();
+        Ok(assignments)
+    }
+
+    fn parse_assignment(&mut self) -> Result<Assignment, ParseError> {
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Assign)?;
+        let expr = self.parse_expr()?;
+        Ok(Assignment { name, expr })
+    }
+
+    fn parse_aggregate_list(&mut self) -> Result<Vec<Aggregate>, ParseError> {
+        let mut aggregates = Vec::new();
+
+        self.skip_newlines();
+        if matches!(self.peek(), TokenKind::RParen) {
+            return Ok(aggregates);
+        }
+
+        aggregates.push(self.parse_aggregate()?);
+
+        while matches!(self.peek(), TokenKind::Comma) {
+            self.advance(); // consume comma
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::RParen) {
+                break;
+            }
+            aggregates.push(self.parse_aggregate()?);
+        }
+
+        self.skip_newlines();
+        Ok(aggregates)
+    }
+
+    fn parse_aggregate(&mut self) -> Result<Aggregate, ParseError> {
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Assign)?;
+        let func = self.expect_ident()?;
+        self.expect(&TokenKind::LParen)?;
+
+        let args = if matches!(self.peek(), TokenKind::RParen) {
+            Vec::new()
+        } else {
+            let mut args = Vec::new();
+            args.push(self.parse_expr()?);
+            while matches!(self.peek(), TokenKind::Comma) {
+                self.advance();
+                args.push(self.parse_expr()?);
+            }
+            args
+        };
+
+        self.expect(&TokenKind::RParen)?;
+
+        Ok(Aggregate { name, func, args })
+    }
+
+    fn parse_sort_list(&mut self) -> Result<Vec<SortItem>, ParseError> {
+        let mut items = Vec::new();
+
+        self.skip_newlines();
+        if matches!(self.peek(), TokenKind::RBracket) {
+            return Ok(items);
+        }
+
+        items.push(self.parse_sort_item()?);
+
+        while matches!(self.peek(), TokenKind::Comma) {
+            self.advance(); // consume comma
+            self.skip_newlines();
+            if matches!(self.peek(), TokenKind::RBracket) {
+                break;
+            }
+            items.push(self.parse_sort_item()?);
+        }
+
+        self.skip_newlines();
+        Ok(items)
+    }
+
+    fn parse_sort_item(&mut self) -> Result<SortItem, ParseError> {
+        let expr = self.parse_expr()?;
+        let direction = match self.peek() {
+            TokenKind::Asc => {
+                self.advance();
+                SortDirection::Asc
+            }
+            TokenKind::Desc => {
+                self.advance();
+                SortDirection::Desc
+            }
+            _ => SortDirection::Asc,
+        };
+        Ok(SortItem { expr, direction })
+    }
+
+    // Expression parsing with Pratt precedence
+    fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        self.parse_expr_bp(0)
+    }
+
+    fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        // Prefix: `not <expr>`. NOT binds looser than comparisons and tighter
+        // than AND, so `not a == 1 and b == 2` is `(NOT (a == 1)) AND (b == 2)`.
+        let mut lhs = if matches!(self.peek(), TokenKind::Not) {
+            self.advance();
+            let inner = self.parse_expr_bp(Self::PREFIX_NOT_BP)?;
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                expr: Box::new(inner),
+            }
+        } else {
+            self.parse_primary()?
+        };
+
+        loop {
+            // Postfix: `expr is null` / `expr is not null`
+            if matches!(self.peek(), TokenKind::Is) {
+                self.advance(); // consume 'is'
+                let negated = if matches!(self.peek(), TokenKind::Not) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                self.expect(&TokenKind::Null)?;
+                lhs = Expr::IsNull {
+                    expr: Box::new(lhs),
+                    negated,
+                };
+                continue;
+            }
+
+            // Infix: `expr in [...]` / `expr not in [...]`
+            if matches!(self.peek(), TokenKind::In)
+                || (matches!(self.peek(), TokenKind::Not)
+                    && matches!(
+                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                        Some(TokenKind::In)
+                    ))
+            {
+                let (l_bp, _r_bp) = (7, 8);
+                if l_bp < min_bp {
+                    break;
+                }
+                let negated = matches!(self.peek(), TokenKind::Not);
+                self.advance(); // consume 'in' (or 'not')
+                if negated {
+                    self.advance(); // consume 'in'
+                }
+                let list = self.parse_in_list()?;
+                lhs = Expr::InList {
+                    expr: Box::new(lhs),
+                    list,
+                    negated,
+                };
+                continue;
+            }
+
+            let op = match self.peek() {
+                TokenKind::Eq => BinaryOp::Eq,
+                TokenKind::Assign => BinaryOp::Eq,
+                TokenKind::NotEq => BinaryOp::NotEq,
+                TokenKind::Lt => BinaryOp::Lt,
+                TokenKind::LtEq => BinaryOp::LtEq,
+                TokenKind::Gt => BinaryOp::Gt,
+                TokenKind::GtEq => BinaryOp::GtEq,
+                TokenKind::And => BinaryOp::And,
+                TokenKind::Or => BinaryOp::Or,
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Sub,
+                TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Slash => BinaryOp::Div,
+                _ => break,
+            };
+
+            let (l_bp, r_bp) = Self::infix_binding_power(op);
+
+            if l_bp < min_bp {
+                break;
+            }
+
+            self.advance(); // consume operator
+            let rhs = self.parse_expr_bp(r_bp)?;
+
+            lhs = Expr::BinaryOp {
+                left: Box::new(lhs),
+                op,
+                right: Box::new(rhs),
+            };
+        }
+
+        Ok(lhs)
+    }
+
+    fn parse_in_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        self.expect(&TokenKind::LBracket)?;
+        self.skip_newlines();
+        let mut list = Vec::new();
+        if !matches!(self.peek(), TokenKind::RBracket) {
+            list.push(self.parse_expr()?);
+            while matches!(self.peek(), TokenKind::Comma) {
+                self.advance();
+                self.skip_newlines();
+                if matches!(self.peek(), TokenKind::RBracket) {
+                    break;
+                }
+                list.push(self.parse_expr()?);
+            }
+        }
+        self.skip_newlines();
+        self.expect(&TokenKind::RBracket)?;
+        Ok(list)
+    }
+
+    const PREFIX_NOT_BP: u8 = 4;
+
+    fn infix_binding_power(op: BinaryOp) -> (u8, u8) {
+        match op {
+            BinaryOp::Or => (1, 2),
+            BinaryOp::And => (3, 4),
+            BinaryOp::Eq | BinaryOp::NotEq => (5, 6),
+            BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => (7, 8),
+            BinaryOp::Add | BinaryOp::Sub => (9, 10),
+            BinaryOp::Mul | BinaryOp::Div => (11, 12),
+        }
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        match self.peek().clone() {
+            TokenKind::Ident(name) => {
+                let token = self.advance();
+                let ident = Ident::new(name, token.span);
+
+                // Check for function call: ident(args)
+                if matches!(self.peek(), TokenKind::LParen) {
+                    self.advance(); // consume (
+                    let args = if matches!(self.peek(), TokenKind::RParen) {
+                        Vec::new()
+                    } else {
+                        let mut args = Vec::new();
+                        args.push(self.parse_expr()?);
+                        while matches!(self.peek(), TokenKind::Comma) {
+                            self.advance();
+                            args.push(self.parse_expr()?);
+                        }
+                        args
+                    };
+                    self.expect(&TokenKind::RParen)?;
+                    return Ok(Expr::FunctionCall { name: ident, args });
+                }
+
+                // Check for dot notation: table.column or table.json.path
+                if matches!(self.peek(), TokenKind::Dot) {
+                    self.advance(); // consume .
+                    let column = self.expect_ident()?;
+                    let mut json_path = Vec::new();
+                    while matches!(self.peek(), TokenKind::Dot) {
+                        self.advance(); // consume .
+                        let segment = self.expect_ident()?;
+                        json_path.push(segment);
+                    }
+                    return Ok(Expr::ColumnRef {
+                        table: Some(ident),
+                        column,
+                        json_path,
+                    });
+                }
+
+                Ok(Expr::Ident(ident))
+            }
+            TokenKind::Star => {
+                self.advance();
+                Ok(Expr::Star)
+            }
+            TokenKind::Integer(v) => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Integer(v)))
+            }
+            TokenKind::Float(v) => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Float(v)))
+            }
+            TokenKind::String(v) => {
+                self.advance();
+                Ok(Expr::Literal(Literal::String(v)))
+            }
+            TokenKind::True => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Bool(true)))
+            }
+            TokenKind::False => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Bool(false)))
+            }
+            TokenKind::Null => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Null))
+            }
+            TokenKind::Param(name) => {
+                let token = self.advance();
+                Ok(Expr::Parameter(Parameter {
+                    name,
+                    span: token.span,
+                }))
+            }
+            TokenKind::ParamBraced(name) => {
+                let token = self.advance();
+                Ok(Expr::Parameter(Parameter {
+                    name,
+                    span: token.span,
+                }))
+            }
+            TokenKind::LParen => {
+                self.advance(); // consume (
+                let expr = self.parse_expr()?;
+                self.expect(&TokenKind::RParen)?;
+                Ok(expr)
+            }
+            _ => Err(ParseError {
+                message: format!("Unexpected token '{}' in expression", self.peek()),
+                span: self.peek_token().span,
+                suggestion: Some("Expressions can be identifiers, literals, `$params`, function calls, or binary operations".to_string()),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_basic_pipeline() {
+        let source = "from users | filter age > 18 | select [id, name]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        assert_eq!(pipeline.source.name.name, "users");
+        assert_eq!(pipeline.steps.len(), 2);
+        assert!(matches!(&pipeline.steps[0], PipelineStep::Filter { .. }));
+        assert!(matches!(&pipeline.steps[1], PipelineStep::Select { .. }));
+    }
+
+    #[test]
+    fn test_parse_table_alias() {
+        let source = "from users as u | select [u.id]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        assert_eq!(pipeline.source.alias.unwrap().name, "u");
+    }
+
+    #[test]
+    fn test_parse_take_skip() {
+        let source = "from users | take 10 | skip 5";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        assert!(matches!(
+            &pipeline.steps[0],
+            PipelineStep::Take { count: 10, .. }
+        ));
+        assert!(matches!(
+            &pipeline.steps[1],
+            PipelineStep::Skip { count: 5, .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_derive() {
+        let source = "from users | derive [age_next = age + 1]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Derive { assignments, .. } = &pipeline.steps[0] {
+            assert_eq!(assignments.len(), 1);
+            assert_eq!(assignments[0].name.name, "age_next");
+        } else {
+            panic!("Expected Derive step");
+        }
+    }
+
+    #[test]
+    fn test_parse_sort() {
+        let source = "from users | sort [name asc, age desc]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Sort { items, .. } = &pipeline.steps[0] {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].direction, SortDirection::Asc);
+            assert_eq!(items[1].direction, SortDirection::Desc);
+        } else {
+            panic!("Expected Sort step");
+        }
+    }
+
+    #[test]
+    fn test_parse_join() {
+        let source = "from posts | join left users on author_id == users.id";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Join {
+            join_type, table, ..
+        } = &pipeline.steps[0]
+        {
+            assert_eq!(*join_type, JoinType::Left);
+            assert_eq!(table.name, "users");
+        } else {
+            panic!("Expected Join step");
+        }
+    }
+
+    #[test]
+    fn test_parse_group() {
+        let source = "from orders | group [customer_id] (total = sum(amount))";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Group {
+            columns,
+            aggregates,
+            ..
+        } = &pipeline.steps[0]
+        {
+            assert_eq!(columns.len(), 1);
+            assert_eq!(aggregates.len(), 1);
+            assert_eq!(aggregates[0].name.name, "total");
+            assert_eq!(aggregates[0].func.name, "sum");
+        } else {
+            panic!("Expected Group step");
+        }
+    }
+
+    #[test]
+    fn test_parse_parameters() {
+        let source = "from users | filter id == $user_id and name == ${full_name}";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+
+        if let PipelineStep::Filter { expr, .. } = &pipeline.steps[0] {
+            // Should have two parameter references
+            let params = collect_params(expr);
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0], "user_id");
+            assert_eq!(params[1], "full_name");
+        } else {
+            panic!("Expected Filter step");
+        }
+    }
+
+    fn collect_params(expr: &Expr) -> Vec<&str> {
+        match expr {
+            Expr::Parameter(p) => vec![&p.name],
+            Expr::BinaryOp { left, right, .. } => {
+                let mut params = collect_params(left);
+                params.extend(collect_params(right));
+                params
+            }
+            _ => vec![],
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_statement() {
+        let source = "into notes\n| insert [title = $title, is_pinned = 0]";
+        let mut parser = Parser::new(source).unwrap();
+        let stmt = parser.parse_statement().unwrap();
+        let Statement::Insert(insert) = stmt else {
+            panic!("Expected Insert statement");
+        };
+        assert_eq!(insert.table.name, "notes");
+        assert_eq!(insert.assignments.len(), 2);
+        assert_eq!(insert.assignments[0].name.name, "title");
+        assert!(matches!(insert.assignments[0].expr, Expr::Parameter(_)));
+        assert_eq!(insert.assignments[1].name.name, "is_pinned");
+    }
+
+    #[test]
+    fn test_parse_update_delete_steps() {
+        let source = "from notes | filter id == $id | update [title = $title]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        assert!(matches!(&pipeline.steps[1], PipelineStep::Update { .. }));
+
+        let source = "from notes | filter is_archived == 0 | delete";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        assert!(matches!(&pipeline.steps[1], PipelineStep::Delete { .. }));
+    }
+
+    #[test]
+    fn test_parse_create_table() {
+        let source = "table notes [
+            id int primary auto,
+            title string not null,
+            category string default 'Personal',
+            is_pinned int default 0,
+            created_at timestamp default current_timestamp
+          ]";
+        let mut parser = Parser::new(source).unwrap();
+        let stmt = parser.parse_statement().unwrap();
+        let Statement::CreateTable(create) = stmt else {
+            panic!("Expected CreateTable statement");
+        };
+        assert_eq!(create.name.name, "notes");
+        assert_eq!(create.columns.len(), 5);
+        assert_eq!(create.columns[0].ty, ColumnType::Integer);
+        assert_eq!(
+            create.columns[0].modifiers,
+            vec![ColumnModifier::PrimaryKey, ColumnModifier::AutoIncrement]
+        );
+        assert!(matches!(
+            create.columns[1].modifiers[0],
+            ColumnModifier::NotNull
+        ));
+    }
+
+    #[test]
+    fn test_parse_statement_rejects_garbage() {
+        let mut parser = Parser::new("explode [id]").unwrap();
+        assert!(parser.parse_statement().is_err());
+    }
+
+    #[test]
+    fn test_insert_leftover_is_rejected() {
+        let mut parser = Parser::new("into notes | insert [title = 'x'] extra").unwrap();
+        assert!(parser.parse_statement().is_err());
+    }
+
+    #[test]
+    fn test_statements_tolerate_trailing_newlines() {
+        for source in [
+            "into notes | insert [title = $t]\n",
+            "into notes\n| insert [title = $t]\n\n",
+            "table notes [id int primary auto]\n",
+            "table notes [\n  id int primary auto\n]\n\n",
+        ] {
+            let mut parser = Parser::new(source).unwrap();
+            assert!(
+                parser.parse_statement().is_ok(),
+                "trailing newline rejected for: {source:?}"
+            );
+        }
+        // Trailing non-newline garbage is still rejected.
+        let mut parser = Parser::new("into notes | insert [title = 'x']\nextra").unwrap();
+        assert!(parser.parse_statement().is_err());
+    }
+}

@@ -1,0 +1,6 @@
+-- Post author activity: per-author post counts and average scores.
+from posts as p
+| join users as u on p.author_id == u.id
+| group [u.id, u.name] (post_count = count(p.id), avg_score = avg(p.score))
+| filter post_count > $threshold
+| sort [post_count desc]

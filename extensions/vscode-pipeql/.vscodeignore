@@ -1,0 +1,7 @@
+.vscode/**
+.vscode-test/**
+out/**
+node_modules/**
+bin/**
+*.vsix
+**/tsconfig.tsbuildinfo

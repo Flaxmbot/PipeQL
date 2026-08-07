@@ -1,0 +1,82 @@
+{
+  "Simple Pipeline": {
+    "prefix": "pipeline",
+    "body": [
+      "from ${1:table}",
+      "| filter ${2:condition}",
+      "| select [${3:*}]"
+    ],
+    "description": "A basic PipeQL pipeline"
+  },
+  "Filter with Parameter": {
+    "prefix": "filter",
+    "body": ["| filter ${1:column} == $${2:param}"],
+    "description": "Filter step with a bind parameter"
+  },
+  "Join": {
+    "prefix": "join",
+    "body": [
+      "| join ${1:table} on ${2:left_column} == ${3:right_column}"
+    ],
+    "description": "Join step"
+  },
+  "Group with Aggregates": {
+    "prefix": "group",
+    "body": [
+      "| group [${1:group_by}] (${2:alias} = ${3:func}(${4:column}))"
+    ],
+    "description": "Group step with aggregate functions"
+  },
+  "Derive": {
+    "prefix": "derive",
+    "body": ["| derive [${1:alias} = ${2:expression}]"],
+    "description": "Derive step (computed column)"
+  },
+  "Sort": {
+    "prefix": "sort",
+    "body": ["| sort [${1:column} ${2|asc,desc|}]"],
+    "description": "Sort step"
+  },
+  "Pagination": {
+    "prefix": "take",
+    "body": ["| take ${1:limit}", "| skip ${2:offset}"],
+    "description": "Take/skip pagination"
+  },
+  "Insert": {
+    "prefix": "insert",
+    "body": [
+      "into ${1:table}",
+      "| insert [",
+      "    ${2:column} = $${3:param},",
+      "    ${4:column} = $${5:value}",
+      "  ]"
+    ],
+    "description": "Insert statement"
+  },
+  "Update": {
+    "prefix": "update",
+    "body": [
+      "from ${1:table}",
+      "| filter ${2:condition}",
+      "| update [",
+      "    ${3:column} = $${4:param}",
+      "  ]"
+    ],
+    "description": "Update rows matched by filters"
+  },
+  "Delete": {
+    "prefix": "delete",
+    "body": ["from ${1:table}", "| filter ${2:condition}", "| delete"],
+    "description": "Delete rows matched by filters"
+  },
+  "Create Table": {
+    "prefix": "table",
+    "body": [
+      "table ${1:name} [",
+      "  ${2:id} ${3|int,float,string,bool,timestamp|} ${4:primary auto},",
+      "  ${5:column} ${6|string,text,int,float,bool,timestamp|} ${7:not null}",
+      "]"
+    ],
+    "description": "Declare a table schema"
+  }
+}

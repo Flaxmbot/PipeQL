@@ -1,0 +1,136 @@
+{
+  "name": "PipeQL",
+  "scopeName": "source.pipeql",
+  "fileTypes": ["pql", "pipeql"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#pipeline" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "begin": "/\\*",
+          "end": "\\*/",
+          "name": "comment.block.pipeql"
+        },
+        {
+          "begin": "--",
+          "end": "$",
+          "name": "comment.line.double-dash.pipeql"
+        }
+      ]
+    },
+
+    "pipeline": {
+      "patterns": [
+        {
+          "match": "\\b(from|into|insert|update|delete|table|filter|select|derive|join|group|sort|take|skip|on|as)\\b",
+          "name": "keyword.control.pipeql"
+        },
+        {
+          "match": "\\b(int|integer|float|real|string|text|bool|boolean|timestamp|datetime)\\b",
+          "name": "keyword.type.pipeql"
+        },
+        {
+          "match": "\\b(primary|auto|unique|default)\\b",
+          "name": "keyword.control.pipeql"
+        },
+        {
+          "match": "\\b(left|right|full|inner)\\b",
+          "name": "keyword.operator.join.pipeql"
+        },
+        {
+          "match": "\\b(and|or|not|in|is)\\b",
+          "name": "keyword.operator.logical.pipeql"
+        },
+        {
+          "match": "\\b(asc|desc)\\b",
+          "name": "keyword.other.direction.pipeql"
+        },
+        { "include": "#expression" },
+        {
+          "match": "\\|",
+          "name": "punctuation.separator.pipe"
+        }
+      ]
+    },
+
+    "expression": {
+      "patterns": [
+        { "include": "#comment-and-whitespace" },
+        {
+          "match": "==|=|!=|<>|<=|>=|<|>|\\+|-|\\*|/",
+          "name": "keyword.operator.pipeql"
+        },
+        {
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "name": "variable.parameter.interpolation.pipeql",
+          "patterns": [
+            {
+              "match": "[a-zA-Z_][a-zA-Z0-9_]*",
+              "name": "variable.parameter.pipeql"
+            }
+          ]
+        },
+        {
+          "match": "\\$[a-zA-Z_][a-zA-Z0-9_]*",
+          "captures": {
+            "0": {
+              "name": "variable.parameter.pipeql"
+            }
+          }
+        },
+        { "include": "#function-call" },
+        {
+          "match": "'(?:''|[^'\\n])*'",
+          "name": "string.quoted.single.pipeql"
+        },
+        {
+          "match": "\\b(0|[1-9][0-9]*)(\\.[0-9]+)?\\b",
+          "name": "constant.numeric.pipeql"
+        },
+        {
+          "match": "\\b(true|false)\\b",
+          "name": "constant.language.boolean.pipeql"
+        },
+        {
+          "match": "\\bnull\\b",
+          "name": "constant.language.null.pipeql"
+        },
+        { "include": "#identifier" }
+      ]
+    },
+
+    "function-call": {
+      "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.function.pipeql"
+        }
+      },
+      "end": "\\)",
+      "name": "meta.function-call.pipeql",
+      "patterns": [
+        { "include": "#expression" }
+      ]
+    },
+
+    "identifier": {
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*\\b",
+      "name": "variable.other.pipeql"
+    },
+
+    "comment-and-whitespace": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#whitespace" }
+      ]
+    },
+
+    "whitespace": {
+      "match": "\\s+"
+    }
+  }
+}

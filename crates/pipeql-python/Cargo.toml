@@ -1,0 +1,17 @@
+[package]
+name = "pipeql-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings for PipeQL (pip package: pipeql-python)"
+readme = "README.md"
+publish = false
+
+[lib]
+name = "pipeql_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+pipeql-core = { workspace = true, features = ["serde"] }
+pyo3 = { version = "0.22", features = ["abi3-py311", "extension-module"] }
+serde_json.workspace = true

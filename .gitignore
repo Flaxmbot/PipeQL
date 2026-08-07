@@ -1,0 +1,8 @@
+/target
+/docs-web
+/Notes
+node_modules
+dist
+*.db
+*.whl
+.DS_Store
