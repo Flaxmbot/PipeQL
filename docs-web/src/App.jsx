@@ -3,7 +3,7 @@ import { SAMPLE_QUERIES } from './data/docsContent';
 import { Database, Shield, Copy, Check } from 'lucide-react';
 
 let initWasm, pipeqlCompile;
-const wasmPromise = import('@flaxmbot/pipeql').then(m => {
+const wasmPromise = import('./wasm.js').then(m => {
   initWasm = m.initWasm;
   pipeqlCompile = m.compile;
   return initWasm();
