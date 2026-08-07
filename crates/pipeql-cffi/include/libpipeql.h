@@ -48,9 +48,10 @@ extern "C" {
 typedef struct PipeqlResult {
     char* sql;           /* target-dialect SQL (owned) */
     char* params_json;   /* JSON array of parameter names, e.g. ["min_age"] (owned) */
-    char* statement_type;/* "select" | "insert" | "update" | "delete" | "create_table" (owned) */
-    int is_mutation;     /* non-zero for insert/update/delete */
+    char* statement_type;/* "select"|"insert"|"update"|"delete"|"create_table"|"upsert"|"union" (owned) */
+    int is_mutation;     /* non-zero for insert/update/delete/upsert */
     char* analysis_json; /* full analysis document: param map, types, occurrences (owned) */
+    int parameter_count; /* number of extracted parameters */
 } PipeqlResult;
 
 typedef struct PipeqlError {
@@ -71,11 +72,56 @@ typedef struct PipeqlError {
 PIPEQL_API PipeqlResult* pipeql_compile(const char* source, const char* dialect,
                                         PipeqlError* err);
 
+/* Compile a PipeQL source string, optionally validating columns against a
+ * JSON schema catalog.
+ *
+ *   source       — NUL-terminated PipeQL source.
+ *   dialect      — NUL-terminated dialect name. May be NULL for default.
+ *   catalog_json — NUL-terminated JSON catalog string, or NULL for no
+ *                  validation. Format:
+ *                  {"tables":{"users":{"name":"users","columns":[{"name":"id",
+ *                  "ty":"Integer"}]}}}
+ *   err          — caller-owned, zero-initialized error slot.
+ *
+ * Returns a heap-allocated PipeqlResult on success (free with
+ * pipeql_result_free), or NULL on failure with *err populated.
+ */
+PIPEQL_API PipeqlResult* pipeql_compile_with_catalog(
+    const char* source, const char* dialect, const char* catalog_json,
+    PipeqlError* err);
+
+/* Parse a PipeQL source into a lossless statement AST, returned as a JSON
+ * string. Covers read pipelines, inserts, upserts, unions, and DDL.
+ *
+ * The returned string must be freed with pipeql_string_free.
+ *
+ *   source — NUL-terminated PipeQL source.
+ *   err    — caller-owned, zero-initialized error slot.
+ *
+ * Returns a heap-allocated JSON string on success (free with
+ * pipeql_string_free), or NULL on failure with *err populated.
+ */
+PIPEQL_API char* pipeql_parse(const char* source, PipeqlError* err);
+
+/* Return the list of supported dialect names as a JSON array string,
+ * e.g. ["postgres","sqlite","duckdb","mysql"].
+ *
+ * The returned string must be freed with pipeql_string_free.
+ */
+PIPEQL_API char* pipeql_supported_dialects(void);
+
 /* Return the PipeQL version as a static string. Never free. */
 PIPEQL_API const char* pipeql_version(void);
 
-/* Free a result from pipeql_compile. Passing NULL is a no-op. */
+/* Free a result from pipeql_compile or pipeql_compile_with_catalog.
+ * Passing NULL is a no-op.
+ */
 PIPEQL_API void pipeql_result_free(PipeqlResult* res);
+
+/* Free a string returned by pipeql_parse or pipeql_supported_dialects.
+ * Passing NULL is a no-op.
+ */
+PIPEQL_API void pipeql_string_free(char* s);
 
 /* Free any message held by *err and reset it. */
 PIPEQL_API void pipeql_error_clear(PipeqlError* err);

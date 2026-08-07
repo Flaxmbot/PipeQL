@@ -128,17 +128,36 @@ Supported: `sqlite3`, `duckdb`, `psycopg` / `psycopg2`, `pymysql`,
 ```c
 #include "libpipeql.h"
 
+PipeqlError err = {0};
+
+/* Basic compile */
 PipeqlResult *res = pipeql_compile(
     "from users | filter age >= $min | take 5", "postgres", &err);
 if (res) {
-    puts(res->sql);         /* SQL text */
-    puts(res->params_json); /* ["min"] */
-    printf("%d\n", res->is_mutation);   /* statement_type / is_mutation (v2.1) */
+    puts(res->sql);              /* SQL text */
+    puts(res->params_json);      /* ["min"] */
+    puts(res->statement_type);   /* "select" */
+    printf("%d\n", res->is_mutation);     /* 0 */
+    printf("%d\n", res->parameter_count); /* 1 */
     pipeql_result_free(res);
 } else {
     printf("error kind=%d: %s\n", err.kind, err.message);
     pipeql_error_clear(&err);
 }
+
+/* Compile with catalog validation */
+const char *catalog = "{\"users\":{\"name\":\"users\","
+    "\"columns\":[{\"name\":\"id\",\"ty\":\"Integer\"}]}}";
+res = pipeql_compile_with_catalog(
+    "from users | select [id]", "postgres", catalog, &err);
+
+/* Parse-only (returns JSON AST) */
+char *ast = pipeql_parse("from users | filter id == $id", &err);
+if (ast) { puts(ast); pipeql_string_free(ast); }
+
+/* List supported dialects */
+char *dialects = pipeql_supported_dialects();
+if (dialects) { puts(dialects); pipeql_string_free(dialects); }
 ```
 
 Build the shared library, then link a consumer (Windows example):
@@ -152,14 +171,55 @@ gcc crates/pipeql-cffi/examples/c_demo.c \
 
 Error kinds: `0=none`, `1=parse`, `2=analysis`, `3=codegen`.
 
+### C API reference
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `pipeql_compile(source, dialect, err)` | `PipeqlResult*` | Basic compile |
+| `pipeql_compile_with_catalog(source, dialect, catalog_json, err)` | `PipeqlResult*` | With schema validation. `catalog_json` may be NULL. |
+| `pipeql_parse(source, err)` | `char*` | JSON AST. Free with `pipeql_string_free`. |
+| `pipeql_supported_dialects()` | `char*` | JSON array. Free with `pipeql_string_free`. |
+| `pipeql_version()` | `const char*` | Static, never free. |
+| `pipeql_result_free(res)` | void | Free a `PipeqlResult`. |
+| `pipeql_string_free(s)` | void | Free a string from `pipeql_parse` / `pipeql_supported_dialects`. |
+| `pipeql_error_clear(err)` | void | Free error message and reset. |
+
+Catalog JSON format:
+
+```json
+{"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"},{"name":"name","ty":"String"}]}}}
+```
+
 ## Go (`github.com/Flaxmbot/PipeQL/go`)
 
 ```go
 import "github.com/Flaxmbot/PipeQL/go" // cgo wrapper over libpipeql
 
+/* Basic compile */
 res, err := pipeql.Compile("from t | take 5", "sqlite")
-// res.SQL, res.Params, res.Analysis, res.StatementType, res.IsMutation
+// res.SQL, res.Params, res.StatementType, res.IsMutation, res.ParameterCount
+
+/* Compile with catalog validation */
+catalog := `{"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"}]}}}`
+res, err = pipeql.CompileWithCatalog("from users | select [id]", "postgres", catalog)
+
+/* Parse-only (returns JSON AST) */
+ast, err := pipeql.Parse("from users | filter id == $id")
+
+/* List supported dialects */
+dialects := pipeql.SupportedDialects() // ["postgres","sqlite","duckdb","mysql"]
 ```
+
+### Go API reference
+
+| Function | Returns | Notes |
+|----------|---------|-------|
+| `Compile(source, dialect)` | `(*Result, error)` | Basic compile |
+| `CompileWithCatalog(source, dialect, catalogJSON)` | `(*Result, error)` | With schema validation. Empty string = no validation. |
+| `Parse(source)` | `(json.RawMessage, error)` | JSON AST of the statement |
+| `SupportedDialects()` | `[]string` | List of dialect names |
+| `Version()` | `string` | Library version |
+| `MustCompile(source, dialect)` | `*Result` | Compile or panic |
 
 Requires `libpipeql` on the library path and a cgo-capable toolchain.
 

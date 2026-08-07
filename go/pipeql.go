@@ -35,10 +35,10 @@ import (
 type ErrKind int
 
 const (
-	ErrNone    ErrKind = C.PIPEQL_ERR_NONE
-	ErrParse   ErrKind = C.PIPEQL_ERR_PARSE
+	ErrNone     ErrKind = C.PIPEQL_ERR_NONE
+	ErrParse    ErrKind = C.PIPEQL_ERR_PARSE
 	ErrAnalysis ErrKind = C.PIPEQL_ERR_ANALYSIS
-	ErrCodegen ErrKind = C.PIPEQL_ERR_CODEGEN
+	ErrCodegen  ErrKind = C.PIPEQL_ERR_CODEGEN
 )
 
 // Err is an error returned by Compile.
@@ -55,12 +55,15 @@ type Result struct {
 	SQL string
 	// Params is the ordered list of extracted parameter names.
 	Params []string
-	// StatementType is "select", "insert", "update", "delete", or "create_table".
+	// StatementType is "select", "insert", "update", "delete", "create_table",
+	// "upsert", or "union".
 	StatementType string
-	// IsMutation is true for insert/update/delete statements.
+	// IsMutation is true for insert/update/delete/upsert statements.
 	IsMutation bool
 	// Analysis is the full semantic analysis (param map, types, occurrences).
 	Analysis json.RawMessage
+	// ParameterCount is the number of extracted parameters.
+	ParameterCount int
 }
 
 // Compile a PipeQL source string for a target dialect
@@ -86,23 +89,79 @@ func Compile(source, dialect string) (*Result, error) {
 	}
 	defer C.pipeql_result_free(res)
 
-	sql := C.GoString(res.sql)
-	paramsJSON := C.GoString(res.params_json)
-	statementType := C.GoString(res.statement_type)
-	analysisJSON := C.GoString(res.analysis_json)
+	return parseResult(res), nil
+}
 
-	var params []string
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return nil, fmt.Errorf("pipeql: invalid params JSON: %w", err)
+// CompileWithCatalog compiles a PipeQL source string, optionally validating
+// columns against a JSON schema catalog.
+//
+// catalogJSON format: {"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"}]}}}
+// Pass empty string for no catalog validation.
+func CompileWithCatalog(source, dialect, catalogJSON string) (*Result, error) {
+	if dialect == "" {
+		dialect = "postgres"
 	}
+	csrc := C.CString(source)
+	defer C.free(unsafe.Pointer(csrc))
+	cdial := C.CString(dialect)
+	defer C.free(unsafe.Pointer(cdial))
 
-	return &Result{
-		SQL:           sql,
-		Params:        params,
-		StatementType: statementType,
-		IsMutation:    res.is_mutation != 0,
-		Analysis:      json.RawMessage(analysisJSON),
-	}, nil
+	var cerr C.PipeqlError
+	var res *C.PipeqlResult
+	if catalogJSON == "" {
+		res = C.pipeql_compile_with_catalog(csrc, cdial, nil, &cerr)
+	} else {
+		ccatalog := C.CString(catalogJSON)
+		defer C.free(unsafe.Pointer(ccatalog))
+		res = C.pipeql_compile_with_catalog(csrc, cdial, ccatalog, &cerr)
+	}
+	if res == nil {
+		defer C.pipeql_error_clear(&cerr)
+		msg := "PipeQL compile failed"
+		if cerr.message != nil {
+			msg = C.GoString(cerr.message)
+		}
+		return nil, &Err{Kind: ErrKind(cerr.kind), Message: msg}
+	}
+	defer C.pipeql_result_free(res)
+
+	return parseResult(res), nil
+}
+
+// Parse a PipeQL source into a lossless statement AST, returned as raw JSON.
+// Covers read pipelines, inserts, upserts, unions, and DDL.
+func Parse(source string) (json.RawMessage, error) {
+	csrc := C.CString(source)
+	defer C.free(unsafe.Pointer(csrc))
+
+	var cerr C.PipeqlError
+	jsonPtr := C.pipeql_parse(csrc, &cerr)
+	if jsonPtr == nil {
+		defer C.pipeql_error_clear(&cerr)
+		msg := "PipeQL parse failed"
+		if cerr.message != nil {
+			msg = C.GoString(cerr.message)
+		}
+		return nil, &Err{Kind: ErrKind(cerr.kind), Message: msg}
+	}
+	defer C.pipeql_string_free(jsonPtr)
+
+	return json.RawMessage(C.GoString(jsonPtr)), nil
+}
+
+// SupportedDialects returns the list of supported dialect names.
+func SupportedDialects() []string {
+	jsonPtr := C.pipeql_supported_dialects()
+	if jsonPtr == nil {
+		return nil
+	}
+	defer C.pipeql_string_free(jsonPtr)
+
+	var dialects []string
+	if err := json.Unmarshal([]byte(C.GoString(jsonPtr)), &dialects); err != nil {
+		return nil
+	}
+	return dialects
 }
 
 // MustCompile compiles or panics. Convenient for static/codegen contexts.
@@ -117,4 +176,26 @@ func MustCompile(source, dialect string) *Result {
 // Version returns the PipeQL library version.
 func Version() string {
 	return C.GoString(C.pipeql_version())
+}
+
+// parseResult converts a C PipeqlResult into a Go Result.
+func parseResult(res *C.PipeqlResult) *Result {
+	sql := C.GoString(res.sql)
+	paramsJSON := C.GoString(res.params_json)
+	statementType := C.GoString(res.statement_type)
+	analysisJSON := C.GoString(res.analysis_json)
+
+	var params []string
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		params = nil
+	}
+
+	return &Result{
+		SQL:            sql,
+		Params:         params,
+		StatementType:  statementType,
+		IsMutation:     res.is_mutation != 0,
+		Analysis:       json.RawMessage(analysisJSON),
+		ParameterCount: int(res.parameter_count),
+	}
 }

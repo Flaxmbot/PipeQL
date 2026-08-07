@@ -181,3 +181,183 @@ func TestCompileSubquery(t *testing.T) {
 		t.Errorf("expected params [EU], got %v", res.Params)
 	}
 }
+
+// --- New tests for gap-fill functions ---
+
+func TestParameterCount(t *testing.T) {
+	res, err := Compile(
+		"from users | filter age >= $min and status == $s | select [id]",
+		"postgres",
+	)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if res.ParameterCount != 2 {
+		t.Errorf("expected ParameterCount=2, got %d", res.ParameterCount)
+	}
+	if res.ParameterCount != len(res.Params) {
+		t.Errorf("ParameterCount=%d != len(Params)=%d", res.ParameterCount, len(res.Params))
+	}
+}
+
+func TestCompileWithCatalogValid(t *testing.T) {
+	catalog := `{"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"},{"name":"name","ty":"String"}]}}}`
+	res, err := CompileWithCatalog("from users | select [id, name]", "postgres", catalog)
+	if err != nil {
+		t.Fatalf("compile with valid catalog: %v", err)
+	}
+	if !strings.Contains(res.SQL, "SELECT id, name FROM users") {
+		t.Errorf("unexpected sql: %s", res.SQL)
+	}
+}
+
+func TestCompileWithCatalogInvalidColumn(t *testing.T) {
+	catalog := `{"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"}]}}}`
+	_, err := CompileWithCatalog("from users | select [nope]", "postgres", catalog)
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+	perr, ok := err.(*Err)
+	if !ok {
+		t.Fatalf("expected *Err, got %T", err)
+	}
+	if perr.Kind != ErrAnalysis {
+		t.Errorf("expected ErrAnalysis, got kind=%d msg=%s", perr.Kind, perr.Message)
+	}
+	if !strings.Contains(perr.Message, "nope") {
+		t.Errorf("error should mention column: %s", perr.Message)
+	}
+}
+
+func TestCompileWithCatalogEmpty(t *testing.T) {
+	res, err := CompileWithCatalog("from users | select [id]", "sqlite", "")
+	if err != nil {
+		t.Fatalf("compile with empty catalog: %v", err)
+	}
+	if !strings.Contains(res.SQL, "SELECT id FROM users") {
+		t.Errorf("unexpected sql: %s", res.SQL)
+	}
+}
+
+func TestParse(t *testing.T) {
+	ast, err := Parse("from users | filter id == $id | select [id]")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(ast) == 0 {
+		t.Fatal("empty AST")
+	}
+	if !strings.Contains(string(ast), "users") {
+		t.Errorf("AST should mention source table: %s", ast)
+	}
+}
+
+func TestParseError(t *testing.T) {
+	_, err := Parse("from users | explode")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	perr, ok := err.(*Err)
+	if !ok {
+		t.Fatalf("expected *Err, got %T", err)
+	}
+	if perr.Kind != ErrParse {
+		t.Errorf("expected ErrParse, got %d", perr.Kind)
+	}
+}
+
+func TestSupportedDialects(t *testing.T) {
+	dialects := SupportedDialects()
+	if len(dialects) != 4 {
+		t.Fatalf("expected 4 dialects, got %d: %v", len(dialects), dialects)
+	}
+	expected := map[string]bool{"postgres": true, "sqlite": true, "duckdb": true, "mysql": true}
+	for _, d := range dialects {
+		if !expected[d] {
+			t.Errorf("unexpected dialect: %s", d)
+		}
+	}
+}
+
+func TestCompileAllDialects(t *testing.T) {
+	dialects := []string{"postgres", "sqlite", "duckdb", "mysql"}
+	for _, dialect := range dialects {
+		res, err := Compile("from users | filter id == $id | take 5", dialect)
+		if err != nil {
+			t.Errorf("compile failed for %s: %v", dialect, err)
+			continue
+		}
+		if res.ParameterCount != 1 {
+			t.Errorf("dialect %s: expected 1 param, got %d", dialect, res.ParameterCount)
+		}
+	}
+}
+
+func TestParseAllDialectsUpsert(t *testing.T) {
+	dialects := []string{"postgres", "sqlite", "duckdb", "mysql"}
+	for _, dialect := range dialects {
+		res, err := Compile(
+			"into users | upsert [name = $n, email = $e] | conflict [email] | do update [name = $n]",
+			dialect,
+		)
+		if err != nil {
+			t.Errorf("upsert compile failed for %s: %v", dialect, err)
+			continue
+		}
+		if res.StatementType != "upsert" {
+			t.Errorf("dialect %s: expected upsert, got %s", dialect, res.StatementType)
+		}
+		if !res.IsMutation {
+			t.Errorf("dialect %s: upsert should be mutation", dialect)
+		}
+	}
+}
+
+func TestParseAllDialectsUnion(t *testing.T) {
+	dialects := []string{"postgres", "sqlite", "duckdb", "mysql"}
+	for _, dialect := range dialects {
+		res, err := Compile(
+			"from a | select [id] | union all from b | select [id]",
+			dialect,
+		)
+		if err != nil {
+			t.Errorf("union compile failed for %s: %v", dialect, err)
+			continue
+		}
+		if res.StatementType != "union" {
+			t.Errorf("dialect %s: expected union, got %s", dialect, res.StatementType)
+		}
+	}
+}
+
+func TestParseAllDialectsSubquery(t *testing.T) {
+	dialects := []string{"postgres", "sqlite", "duckdb", "mysql"}
+	for _, dialect := range dialects {
+		res, err := Compile(
+			"from orders | filter customer_id in (from customers | filter region == $r | select [id])",
+			dialect,
+		)
+		if err != nil {
+			t.Errorf("subquery compile failed for %s: %v", dialect, err)
+			continue
+		}
+		if !strings.Contains(res.SQL, "IN (") {
+			t.Errorf("dialect %s: expected IN clause, got %s", dialect, res.SQL)
+		}
+	}
+}
+
+func TestCompileWithCatalogAllDialects(t *testing.T) {
+	catalog := `{"tables":{"users":{"name":"users","columns":[{"name":"id","ty":"Integer"},{"name":"name","ty":"String"}]}}}`
+	dialects := []string{"postgres", "sqlite", "duckdb", "mysql"}
+	for _, dialect := range dialects {
+		res, err := CompileWithCatalog("from users | select [id, name]", dialect, catalog)
+		if err != nil {
+			t.Errorf("catalog compile failed for %s: %v", dialect, err)
+			continue
+		}
+		if !strings.Contains(res.SQL, "SELECT id, name FROM users") {
+			t.Errorf("dialect %s: unexpected sql: %s", dialect, res.SQL)
+		}
+	}
+}
