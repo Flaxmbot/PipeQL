@@ -385,7 +385,7 @@ catalog validation; mutation pipelines are validated for step legality
 ### 7.1 `$data` object expansion (driver-level extension)
 
 The `$data` token is **not part of the compiler** — the official drivers
-(`@pipeql/js/driver`, `pipeql_python.driver`) rewrite it into explicit column
+(`@flaxmbot/pipeql/driver`, `pipeql_python.driver`) rewrite it into explicit column
 assignments before compilation:
 
 - Insert: the whole bound object becomes the data object:

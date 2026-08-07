@@ -371,7 +371,7 @@ const rows = await db.query('from users | filter role == $role', { role: 'admin'
 const user = await db.insertAndFetch('into users | upsert $data | conflict [email] | do update $data', { name: 'Alice', email: 'alice@example.com' });
 ```
 
-### Python (`pipeql-python`)
+### Python (`pipeql`)
 
 ```python
 import sqlite3

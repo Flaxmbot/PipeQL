@@ -3,12 +3,12 @@
 PipeQL's compiler core is a `#![deny(unsafe_code)]` Rust crate with four
 high-level APIs: WASM (JS), native Python, a C ABI, and a language server.
 
-## JavaScript / WASM (`@pipeql/js`)
+## JavaScript / WASM (`@flaxmbot/pipeql`)
 
 The WASM engine compiles the core to a ~107KB-gzip bundle.
 
 ```ts
-import { compile, compileWithCatalog, parseAst, supportedDialects } from "@pipeql/js";
+import { compile, compileWithCatalog, parseAst, supportedDialects } from "@flaxmbot/pipeql";
 
 const result = compile("from users | filter age >= $min | take 5", "postgres");
 result.sql;             // "SELECT ... WHERE (age >= $1) ... LIMIT 5;"
@@ -28,13 +28,13 @@ cd js && npm run build
 node test/smoke.mjs
 ```
 
-### `@pipeql/js/driver` — zero-boilerplate database adapters
+### `@flaxmbot/pipeql/driver` — zero-boilerplate database adapters
 
 Wrap any native connection (Node & Edge runtimes) and let PipeQL handle
 compilation, parameter binding, and `.all()` vs `.run()` dispatch:
 
 ```ts
-import { createPipeqlDriver } from "@pipeql/js/driver";
+import { createPipeqlDriver } from "@flaxmbot/pipeql/driver";
 import sqlite3 from "sqlite3";
 
 const db = createPipeqlDriver(new sqlite3.Database("notes.db"), { dialect: "sqlite" });
@@ -91,7 +91,7 @@ Build & test:
 
 ```bash
 maturin build -m crates/pipeql-python/Cargo.toml --release
-pip install target/wheels/pipeql_python-*.whl
+pip install target/wheels/pipeql-*.whl
 python python/tests/test_pipeql.py
 ```
 
@@ -191,6 +191,16 @@ Catalog JSON format:
 ```
 
 ## Go (`github.com/Flaxmbot/PipeQL/go`)
+
+Fetch from inside a Go module (the binding is a library, not a command, so
+`go install` does not apply — use `go get`):
+
+```bash
+# inside your project (any directory containing a go.mod)
+go get github.com/Flaxmbot/PipeQL/go@latest
+# or pin a specific release
+# go get github.com/Flaxmbot/PipeQL/go@v1.1.4
+```
 
 ```go
 import "github.com/Flaxmbot/PipeQL/go" // cgo wrapper over libpipeql

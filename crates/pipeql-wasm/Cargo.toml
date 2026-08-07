@@ -3,7 +3,7 @@ name = "pipeql-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WASM bindings for PipeQL - powering the @pipeql/js JavaScript SDK"
+description = "WASM bindings for PipeQL - powering the @flaxmbot/pipeql JavaScript SDK"
 publish = false
 
 [lib]

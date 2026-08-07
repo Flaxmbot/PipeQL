@@ -158,6 +158,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Package crate (for release artifact)
+        run: |
+          cargo package -p pipeql-core --allow-dirty
+          mkdir -p crate-dist
+          cp target/package/pipeql-core-*.crate crate-dist/
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -167,11 +172,18 @@ jobs:
           else
             echo "CARGO_REGISTRY_TOKEN not set, skipping crates.io publish"
           fi
+      - name: Upload crate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-crate
+          path: crate-dist/*
 
   publish-go-proxy:
     name: Publish to Go Proxy (pkg.go.dev)
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -243,10 +255,10 @@ jobs:
             echo "cargo install pipeql-cli"
             echo ""
             echo "# JavaScript / TypeScript"
-            echo "npm install @pipeql/js"
+            echo "npm install @flaxmbot/pipeql"
             echo ""
             echo "# Python"
-            echo "pip install pipeql-python"
+            echo "pip install pipeql"
             echo ""
             echo "# C/C++ (from source)"
             echo "cargo build --release -p pipeql-cffi"
@@ -264,8 +276,8 @@ jobs:
             echo "- [Documentation](https://pipeql.vercel.app)"
             echo "- [GitHub](https://github.com/Flaxmbot/PipeQL)"
             echo "- [crates.io](https://crates.io/crates/pipeql-core)"
-            echo "- [npm](https://www.npmjs.com/package/@pipeql/js)"
-            echo "- [PyPI](https://pypi.org/project/pipeql-python/)"
+            echo "- [npm](https://www.npmjs.com/package/@flaxmbot/pipeql)"
+            echo "- [PyPI](https://pypi.org/project/pipeql/)"
           } > artifacts/CHANGELOG.md
       - name: List artifacts
         run: find artifacts -type f

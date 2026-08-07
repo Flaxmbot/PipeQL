@@ -201,7 +201,7 @@ export default function App() {
     <aside className="hidden lg:flex flex-col w-56 shrink-0 self-start sticky top-[52px] h-[calc(100vh-52px)] py-5 bg-background border-r border-surface-container overflow-y-auto" style={{scrollbarWidth:'none'}}>
       <div className="mb-3 px-4">
         <h2 className="text-base font-bold text-on-surface">Docs</h2>
-        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.3</span>
+        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.4</span>
       </div>
       <nav className="flex-1 flex flex-col gap-1">
         {SIDEBAR.map(({ group, items }) => (
@@ -247,7 +247,7 @@ export default function App() {
             ))}
           </nav>
         </div>
-        <a href="https://github.com/pipeql/pipeql" target="_blank" rel="noreferrer"
+        <a href="https://github.com/Flaxmbot/PipeQL" target="_blank" rel="noreferrer"
           className="border border-outline-variant hover:bg-surface-container bg-surface text-on-surface px-4 py-1.5 rounded-2xl text-xs font-semibold transition-all flex items-center gap-1.5">
           <span className="material-symbols-outlined text-sm">terminal</span> GitHub
         </a>
@@ -325,7 +325,7 @@ export default function App() {
               <div className="relative z-10 max-w-3xl w-full flex flex-col items-center text-center space-y-5">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-2xl bg-surface-container border border-outline-variant/30 text-on-surface-variant text-[11px] font-semibold fade-in-up cursor-pointer hover:bg-surface-container-high transition-colors"
                   onClick={() => goToDoc('quickstart')}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.3 Polyglot release is live
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.4 Polyglot release is live
                 </div>
                 <h1 className="text-5xl md:text-7xl font-bold fade-in-up delay-100 tracking-tight leading-tight select-none">
                   <span className="g-blue inline-block hover:-translate-y-2 transition-transform">P</span>
@@ -616,7 +616,7 @@ SELECT * FROM users WHERE (name = $1) AND (age >= $2)
                 <div className="space-y-3">
                   <SectionTitle>Open Source</SectionTitle>
                   <p className="text-on-surface-variant text-sm leading-relaxed">PipeQL is MIT licensed. The entire compiler, all SDKs, the LSP, VS Code extension, and tree-sitter grammar are open source on GitHub.</p>
-                  <a href="https://github.com/pipeql/pipeql" target="_blank" rel="noreferrer"
+                  <a href="https://github.com/Flaxmbot/PipeQL" target="_blank" rel="noreferrer"
                     className="inline-flex items-center gap-2 bg-surface-container-lowest border border-outline-variant/20 rounded-2xl px-5 py-2.5 text-sm font-semibold text-on-surface hover:bg-surface-container transition-all">
                     <span className="material-symbols-outlined text-base">terminal</span> View on GitHub
                   </a>
@@ -747,10 +747,10 @@ SELECT * FROM users WHERE (name = $1) AND (age >= $2)
                   <StepCard num={1} title="Install">
                     <div className="space-y-2 mt-2">
                       {[
-                        ['Node.js (WASM)', 'npm install @pipeql/js'],
-                        ['Python (PyO3)', 'pip install pipeql-python'],
+                        ['Node.js (WASM)', 'npm install @flaxmbot/pipeql'],
+                        ['Python (PyO3)', 'pip install pipeql'],
                         ['C/C++ (CFFI)', 'cargo build --release -p pipeql-cffi'],
-                        ['Go (CGO)', 'go get github.com/Flaxmbot/PipeQL/go'],
+                        ['Go (CGO)', 'go get github.com/Flaxmbot/PipeQL/go@latest'],
                         ['CLI', 'cargo install pipeql-cli']
                       ].map(([lang, cmd]) => (
                         <CodeBlock key={lang} label={lang}>{cmd}</CodeBlock>
@@ -759,7 +759,7 @@ SELECT * FROM users WHERE (name = $1) AND (age >= $2)
                   </StepCard>
                   <StepCard num={2} title="Setup Driver">
                     <CodeBlock label="db.js">{`import sqlite3 from 'sqlite3';
-import { createPipeqlDriver } from '@pipeql/js/driver';
+import { createPipeqlDriver } from '@flaxmbot/pipeql/driver';
 
 const db = createPipeqlDriver(new sqlite3.Database('app.db'), { dialect: 'sqlite' });`}</CodeBlock>
                   </StepCard>
@@ -944,7 +944,7 @@ Params: ["role", "min_age"]`}</CodeBlock>
 
                   <SectionTitle>Step 2: Create the Driver</SectionTitle>
                   <CodeBlock label="db.js">{`import sqlite3 from 'sqlite3';
-import { createPipeqlDriver } from '@pipeql/js/driver';
+import { createPipeqlDriver } from '@flaxmbot/pipeql/driver';
 
 export const db = createPipeqlDriver(
   new sqlite3.Database('app.db'),
@@ -1177,7 +1177,7 @@ WHERE (customer_id IN (
                 <div className="space-y-5">
                   <h1 className="text-3xl font-bold text-on-surface mb-2">API Reference</h1>
                   <SectionTitle>JavaScript / TypeScript</SectionTitle>
-                  <CodeBlock label="@pipeql/js">{`import { compile, compileWithCatalog, parse, supportedDialects, version } from '@pipeql/js';
+                  <CodeBlock label="@flaxmbot/pipeql">{`import { compile, compileWithCatalog, parse, supportedDialects, version } from '@flaxmbot/pipeql';
 
 // Basic compile
 const r = compile("from users | take 5", "postgres");
@@ -1282,7 +1282,7 @@ pipeql supported-dialects`}</CodeBlock>
                 <div className="space-y-5">
                   <h1 className="text-3xl font-bold text-on-surface mb-2">Driver Adapters</h1>
                   <SectionTitle>JavaScript</SectionTitle>
-                  <CodeBlock label="@pipeql/js/driver">{`import { createPipeqlDriver } from '@pipeql/js/driver';
+                  <CodeBlock label="@flaxmbot/pipeql/driver">{`import { createPipeqlDriver } from '@flaxmbot/pipeql/driver';
 import sqlite3 from 'sqlite3';
 
 const db = createPipeqlDriver(new sqlite3.Database('app.db'), { dialect: 'sqlite' });
