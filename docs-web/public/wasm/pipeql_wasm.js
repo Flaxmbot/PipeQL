@@ -29,12 +29,20 @@ export class Compiled {
         return ret;
     }
     /**
-     * True for mutations (insert/update/delete).
+     * True for mutations (insert/update/delete/upsert).
      * @returns {boolean}
      */
     get is_mutation() {
         const ret = wasm.compiled_is_mutation(this.__wbg_ptr);
         return ret !== 0;
+    }
+    /**
+     * Number of distinct bind parameters.
+     * @returns {number}
+     */
+    get parameter_count() {
+        const ret = wasm.compiled_parameter_count(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * The ordered array of parameter names.
@@ -62,7 +70,7 @@ export class Compiled {
     }
     /**
      * The statement kind: "select", "insert", "update", "delete",
-     * "create_table".
+     * "create_table", "upsert", "union".
      * @returns {string}
      */
     get statement_type() {

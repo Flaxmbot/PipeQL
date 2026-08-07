@@ -5,10 +5,10 @@
 <h3 align="center">Pipelined, Injection-Safe, Polyglot Query & Mutation Language</h3>
 
 <p align="center">
-  <a href="https://github.com/Flaxmbot/PipeQL/actions"><img src="https://img.shields.io/github/actions/workflow/status/Flaxmbot/PipeQL/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI Status" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/actions"><img src="https://img.shields.io/github/actions/workflow/status/Flaxmbot/PipeQL/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status" /></a>
   <a href="https://npmjs.com/package/@flaxmbot/pipeql"><img src="https://img.shields.io/npm/v/@flaxmbot/pipeql?style=flat-square&logo=npm&logoColor=white&color=38bdf8" alt="npm" /></a>
   <a href="https://pypi.org/project/pipeql"><img src="https://img.shields.io/pypi/v/pipeql?style=flat-square&logo=pypi&logoColor=white&color=818cf8" alt="PyPI" /></a>
-  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/release-v1.1.0-10b981?style=flat-square&logo=github" alt="Release" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.1.2"><img src="https://img.shields.io/badge/release-v1.1.2-10b981?style=flat-square&logo=github" alt="Release" /></a>
   <a href="https://github.com/Flaxmbot/PipeQL/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-c084fc?style=flat-square" alt="License" /></a>
 </p>
 

@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SAMPLE_QUERIES } from './data/docsContent';
-import { Database, Shield, Copy, Check } from 'lucide-react';
-
-let initWasm, pipeqlCompile;
-const wasmPromise = import('./wasm.js').then(m => {
-  initWasm = m.initWasm;
-  pipeqlCompile = m.compile;
-  return initWasm();
-});
+import { Database, Shield, Copy, Check, Play, Terminal, Cpu, FileCode, Layers, Info, RefreshCw, Code2, Zap } from 'lucide-react';
+import { initWasm, compile as pipeqlCompile } from './wasm.js';
 
 // ─── Search Index ───────────────────────────────────────────────────
 const DOC_SECTIONS_DB = [
@@ -115,44 +109,65 @@ export default function App() {
   const [compileError, setCompileError] = useState(null);
   const [wasmReady, setWasmReady] = useState(false);
   const [compileTime, setCompileTime] = useState(null);
+  const [outputTab, setOutputTab] = useState('sql'); // 'sql' | 'params' | 'ast'
+  const [isCompiling, setIsCompiling] = useState(false);
   const textareaRef = useRef(null);
-  const debounceRef = useRef(null);
+
+  const handleRun = useCallback(async (codeToCompile = editorValue, dialectToUse = compilerDialect) => {
+    if (!codeToCompile || !codeToCompile.trim()) return;
+    setIsCompiling(true);
+    const start = performance.now();
+    try {
+      const result = await pipeqlCompile(codeToCompile, dialectToUse);
+      setCompileResult(result);
+      setCompileError(null);
+      setCompileTime((performance.now() - start).toFixed(2));
+    } catch (err) {
+      setCompileError(err?.message || String(err));
+      setCompileResult(null);
+      setCompileTime(null);
+    } finally {
+      setIsCompiling(false);
+    }
+  }, [editorValue, compilerDialect]);
 
   // Initialize WASM on mount
   useEffect(() => {
-    wasmPromise.then(() => setWasmReady(true)).catch(() => {});
+    initWasm()
+      .then(() => {
+        setWasmReady(true);
+      })
+      .catch((err) => {
+        console.error('Failed to load WASM engine:', err);
+      });
   }, []);
 
-  // Live compilation with debounce
-  const doCompile = useCallback((source, dialect) => {
-    if (!wasmReady || !source || !source.trim()) return;
-    const start = performance.now();
-    pipeqlCompile(source, dialect)
-      .then(result => {
-        setCompileResult(result);
-        setCompileError(null);
-        setCompileTime(Math.round(performance.now() - start));
-      })
-      .catch(err => {
-        setCompileError(err?.message || String(err));
-        setCompileResult(null);
-        setCompileTime(null);
-      });
-  }, [wasmReady]);
-
+  // Auto compile on initial load & when WASM ready or dialect changes
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doCompile(editorValue, compilerDialect), 300);
-    return () => clearTimeout(debounceRef.current);
-  }, [editorValue, compilerDialect, doCompile]);
-
-  // Recompile immediately on dialect change (no debounce)
-  useEffect(() => {
-    if (wasmReady && editorValue) doCompile(editorValue, compilerDialect);
-  }, [compilerDialect]);
+    if (wasmReady) {
+      handleRun(editorValue, compilerDialect);
+    }
+  }, [wasmReady, compilerDialect]);
 
   const loadSample = (key) => {
-    setEditorValue(SAMPLE_QUERIES[key].pipeql);
+    const val = SAMPLE_QUERIES[key].pipeql;
+    setEditorValue(val);
+    if (wasmReady) {
+      handleRun(val, compilerDialect);
+    }
+  const handleKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleRun();
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const ta = e.target;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      setEditorValue(editorValue.substring(0, start) + '  ' + editorValue.substring(end));
+      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
+    }
   };
 
   const copyToClipboard = (text) => {
@@ -177,12 +192,14 @@ export default function App() {
 
   const goToDoc = (id) => { setActiveTab('docs'); setActiveDocSection(id); setSearchResults(null); setSearchValue(''); window.scrollTo(0,0); };
 
+  const handleSearchResultClick = (tab, id) => { goToDoc(id); };
+
   // ─── Sidebar Component ──────────────────────────────────────────
   const Sidebar = () => (
     <aside className="hidden lg:flex flex-col w-56 shrink-0 self-start sticky top-[52px] h-[calc(100vh-52px)] py-5 bg-background border-r border-surface-container overflow-y-auto" style={{scrollbarWidth:'none'}}>
       <div className="mb-3 px-4">
         <h2 className="text-base font-bold text-on-surface">Docs</h2>
-        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.1</span>
+        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.2</span>
       </div>
       <nav className="flex-1 flex flex-col gap-1">
         {SIDEBAR.map(({ group, items }) => (
@@ -306,7 +323,7 @@ export default function App() {
               <div className="relative z-10 max-w-3xl w-full flex flex-col items-center text-center space-y-5">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-2xl bg-surface-container border border-outline-variant/30 text-on-surface-variant text-[11px] font-semibold fade-in-up cursor-pointer hover:bg-surface-container-high transition-colors"
                   onClick={() => goToDoc('quickstart')}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.1 Polyglot release is live
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.2 Polyglot release is live
                 </div>
                 <h1 className="text-5xl md:text-7xl font-bold fade-in-up delay-100 tracking-tight leading-tight select-none">
                   <span className="g-blue inline-block hover:-translate-y-2 transition-transform">P</span>
@@ -337,134 +354,256 @@ export default function App() {
               </div>
             </section>
 
-            {/* Playground — Real WASM IDE */}
-            <section className="w-full max-w-container-max mx-auto px-6 py-14">
+            {/* Playground — Modern WASM Workstation */}
+            <section className="w-full max-w-container-max mx-auto px-6 py-12">
               <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold text-on-surface tracking-tight mb-1">Try It Live</h2>
-                <p className="text-on-surface-variant max-w-lg mx-auto text-sm">
-                  {wasmReady ? 'Type PipeQL below — compiles to SQL in real-time via WASM.' : 'Loading WASM compiler...'}
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold mb-3">
+                  <Zap size={14} className="text-primary animate-pulse" /> Live WASM Compiler Sandbox
+                </div>
+                <h2 className="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Try PipeQL Live</h2>
+                <p className="text-on-surface-variant max-w-xl mx-auto text-sm">
+                  Write PipeQL pipeline queries or mutations below, hit <strong className="text-primary font-mono">Run Query</strong>, and see instant, 100% injection-safe SQL compilation.
                 </p>
               </div>
-              <div className="bg-surface-container-lowest border border-outline-variant/20 overflow-hidden shadow-lg shadow-black/10 max-w-4xl mx-auto">
-                {/* IDE Top Bar */}
-                <div className="bg-surface-container px-4 py-2 flex items-center justify-between border-b border-outline-variant/20">
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1.5">
-                      <span className="w-2.5 h-2.5 bg-g-red/80"></span>
-                      <span className="w-2.5 h-2.5 bg-g-yellow/80"></span>
-                      <span className="w-2.5 h-2.5 bg-g-green/80"></span>
+
+              <div className="bg-[#12131e] border border-white/10 overflow-hidden shadow-2xl shadow-black/40 max-w-6xl mx-auto rounded-2xl">
+                {/* IDE Main Control Toolbar */}
+                <div className="bg-[#181926] px-5 py-3 flex flex-wrap items-center justify-between border-b border-white/10 gap-3">
+                  {/* Left: Window Controls + Engine Status */}
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 bg-[#ff5f56] rounded-full inline-block shadow-sm"></span>
+                      <span className="w-3 h-3 bg-[#ffbd2e] rounded-full inline-block shadow-sm"></span>
+                      <span className="w-3 h-3 bg-[#27c93f] rounded-full inline-block shadow-sm"></span>
                     </div>
-                    <div className="w-px h-4 bg-outline-variant/40 mx-2"></div>
-                    <span className="text-[10px] font-medium text-on-surface-variant">Live Compiler</span>
-                  </div>
-                  <div className="flex items-center gap-2">
+                    <div className="w-px h-4 bg-white/15"></div>
+                    <div className="flex items-center gap-2">
+                      <Cpu size={14} className="text-[#89b4fa]" />
+                      <span className="text-xs font-bold text-white tracking-wide">PipeQL Engine</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${wasmReady ? 'text-[#a6e3a1] bg-[#a6e3a1]/10 border-[#a6e3a1]/30' : 'text-[#f9e2af] bg-[#f9e2af]/10 border-[#f9e2af]/30'}`}>
+                        {wasmReady ? '● WASM v1.1.2 Ready' : '⏳ Initializing WASM...'}
+                      </span>
+                    </div>
                     {compileTime !== null && (
-                      <span className="text-[9px] text-outline font-medium bg-surface-container-low px-2 py-0.5 border border-outline-variant/20">{compileTime}µs</span>
+                      <span className="text-[11px] text-[#a6e3a1] font-mono font-medium bg-[#a6e3a1]/10 px-2.5 py-0.5 border border-[#a6e3a1]/25 rounded-md flex items-center gap-1">
+                        <Zap size={11} /> {compileTime} ms
+                      </span>
                     )}
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 border ${wasmReady ? 'text-g-green bg-g-green/10 border-g-green/20' : 'text-g-yellow bg-g-yellow/10 border-g-yellow/20'}`}>
-                      {wasmReady ? 'WASM Ready' : 'Loading...'}
-                    </span>
                   </div>
-                </div>
 
-                {/* Dialect Tabs */}
-                <div className="bg-surface-container px-4 py-2 flex items-center justify-between border-b border-outline-variant/20">
-                  <div className="flex gap-0.5">
-                    {['postgres','sqlite','duckdb','mysql'].map(d => (
-                      <button key={d} onClick={() => setCompilerDialect(d)}
-                        className={`px-3 py-1 text-[10px] font-semibold transition-all ${compilerDialect === d ? 'bg-surface-container-lowest text-primary shadow-sm border border-outline-variant/20' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'}`}>{d}</button>
-                    ))}
-                  </div>
-                  <div className="flex gap-1">
-                    {Object.keys(SAMPLE_QUERIES).map(k => (
-                      <button key={k} onClick={() => loadSample(k)}
-                        className={`px-2.5 py-1 text-[10px] font-medium transition-all bg-surface-container-low text-on-surface-variant hover:bg-surface-container border border-outline-variant/20`}>{SAMPLE_QUERIES[k].title}</button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Editor Area */}
-                <div className="grid grid-cols-1 md:grid-cols-2 min-h-[280px]">
-                  {/* Input Editor */}
-                  <div className="p-4 border-r border-outline-variant/20 flex flex-col">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-1.5 h-1.5 bg-primary"></div>
-                        <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Input</span>
-                      </div>
-                      <span className="text-[9px] text-outline font-mono">.pipeql</span>
+                  {/* Right: Dialect Selector + PROMINENT RUN BUTTON */}
+                  <div className="flex items-center gap-3">
+                    {/* Dialect Selector */}
+                    <div className="bg-[#1e1e2e] p-1 rounded-xl flex items-center gap-1 border border-white/10">
+                      {[
+                        { id: 'postgres', label: 'PostgreSQL' },
+                        { id: 'sqlite', label: 'SQLite' },
+                        { id: 'duckdb', label: 'DuckDB' },
+                        { id: 'mysql', label: 'MySQL' }
+                      ].map(d => (
+                        <button key={d.id} onClick={() => setCompilerDialect(d.id)}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${compilerDialect === d.id ? 'bg-[#89b4fa] text-[#11111b] shadow-md shadow-[#89b4fa]/20' : 'text-[#cdd6f4]/70 hover:text-white hover:bg-white/5'}`}>
+                          {d.label}
+                        </button>
+                      ))}
                     </div>
-                    <textarea
-                      ref={textareaRef}
-                      value={editorValue}
-                      onChange={e => setEditorValue(e.target.value)}
-                      spellCheck={false}
-                      className="flex-1 font-mono text-[13px] text-on-surface p-3 bg-surface border border-outline-variant/15 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 leading-relaxed placeholder-outline"
-                      placeholder="Type PipeQL here..."
-                    />
-                  </div>
 
-                  {/* Output Editor */}
-                  <div className="p-4 bg-[#1a1b26] flex flex-col">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-1.5 h-1.5 bg-g-green"></div>
-                        <span className="text-[10px] font-bold text-surface-variant uppercase tracking-wider">Output</span>
+                    {/* PROMINENT RUN BUTTON */}
+                    <button
+                      onClick={() => handleRun()}
+                      disabled={!wasmReady || isCompiling}
+                      className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-lg ${
+                        wasmReady && !isCompiling
+                          ? 'bg-gradient-to-r from-[#89b4fa] via-[#74c7ec] to-[#89dceb] text-[#11111b] hover:opacity-95 hover:scale-[1.02] active:scale-[0.98] shadow-[#89b4fa]/25 cursor-pointer ring-2 ring-[#89b4fa]/40'
+                          : 'bg-white/10 text-white/40 cursor-not-allowed'
+                      }`}
+                    >
+                      <Play size={14} className="fill-current" />
+                      <span>{isCompiling ? 'Compiling...' : 'RUN QUERY'}</span>
+                      <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 text-[9px] bg-black/20 text-[#11111b]/80 rounded font-mono border border-black/10">Ctrl+Enter</kbd>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Examples Toolbar */}
+                <div className="bg-[#161622] px-5 py-2 flex items-center justify-between border-b border-white/5 overflow-x-auto">
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[11px] font-semibold text-[#a6adc8] uppercase tracking-wider flex items-center gap-1">
+                      <Code2 size={12} /> Samples:
+                    </span>
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                      {Object.keys(SAMPLE_QUERIES).map(k => (
+                        <button key={k} onClick={() => loadSample(k)}
+                          className="px-2.5 py-1 text-[11px] font-medium text-[#cdd6f4]/80 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all border border-white/10 whitespace-nowrap">
+                          {SAMPLE_QUERIES[k].title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="hidden md:flex items-center gap-3 text-[11px] text-[#a6adc8]">
+                    <span>100% Parameter Isolated</span>
+                  </div>
+                </div>
+
+                {/* Editor Split Screen Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 min-h-[400px]">
+                  {/* Left Column: PipeQL Input */}
+                  <div className="flex flex-col border-r border-white/10 bg-[#141420]">
+                    <div className="flex items-center justify-between px-4 py-2 bg-[#181926] border-b border-white/10">
+                      <div className="flex items-center gap-2">
+                        <FileCode size={13} className="text-[#89b4fa]" />
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">PipeQL Input</span>
+                        <span className="text-[10px] text-[#a6adc8] font-mono bg-white/5 px-1.5 py-0.5 rounded">query.pipeql</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[9px] text-surface-variant font-mono">.{compilerDialect === 'postgres' ? 'psql' : compilerDialect}</span>
-                        <button onClick={() => compileResult && copyToClipboard(compileResult.sql)}
-                          className="text-[9px] text-surface-variant hover:text-g-blue flex items-center gap-1 transition-colors px-1.5 py-0.5 hover:bg-white/5">
-                          {copiedCode ? <><Check size={10} className="text-g-green" /> Copied</> : <><Copy size={10} /> Copy</>}
-                        </button>
+                        <button onClick={() => setEditorValue('')} className="text-[11px] text-[#a6adc8] hover:text-white transition-colors px-2 py-0.5 rounded hover:bg-white/5">Clear</button>
+                        <button onClick={() => handleRun()} className="text-[11px] text-[#89b4fa] hover:underline font-semibold flex items-center gap-1">Format & Run</button>
                       </div>
                     </div>
 
-                    {compileError ? (
-                      <div className="flex-1 p-3 bg-[#ba1a1a]/10 border border-[#ba1a1a]/30 rounded-lg">
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <span className="material-symbols-outlined text-[#ba1a1a] text-sm">error</span>
-                          <span className="text-[10px] font-bold text-[#ba1a1a] uppercase tracking-wider">Compile Error</span>
-                        </div>
-                        <pre className="font-mono text-[12px] text-[#ba1a1a] whitespace-pre-wrap leading-relaxed">{compileError}</pre>
-                      </div>
-                    ) : compileResult ? (
-                      <pre className="flex-1 font-mono text-[13px] text-[#81c995] overflow-x-auto leading-relaxed whitespace-pre">{compileResult.sql}</pre>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center">
-                        <span className="text-[11px] text-surface-variant/40">{wasmReady ? 'Start typing to compile...' : 'Initializing WASM...'}</span>
-                      </div>
-                    )}
+                    <div className="flex-1 relative flex">
+                      {/* Textarea */}
+                      <textarea
+                        ref={textareaRef}
+                        value={editorValue}
+                        onChange={e => setEditorValue(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        spellCheck={false}
+                        className="w-full flex-1 font-mono text-[13px] text-[#cdd6f4] p-4 bg-[#11111b] resize-none focus:outline-none leading-relaxed placeholder-[#6c7086] border-none"
+                        placeholder="Write PipeQL query here..."
+                      />
+                    </div>
+                  </div>
 
-                    {/* Bind Parameters */}
-                    <div className="mt-3 pt-3 border-t border-white/10">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span className="text-[9px] text-surface-variant font-bold uppercase tracking-wider">Bound Parameters</span>
-                        {compileResult && (
-                          <span className="text-[9px] text-surface-variant/60">({compileResult.params.length})</span>
-                        )}
+                  {/* Right Column: Output Results (Tabbed) */}
+                  <div className="flex flex-col bg-[#11111b]">
+                    {/* Output Navigation Header */}
+                    <div className="flex items-center justify-between px-4 py-2 bg-[#181926] border-b border-white/10">
+                      <div className="flex items-center gap-1">
+                        {[
+                          { id: 'sql', label: 'Compiled SQL', icon: Terminal },
+                          { id: 'params', label: `Parameters (${compileResult?.params?.length || 0})`, icon: Shield },
+                          { id: 'ast', label: 'AST Analysis', icon: Layers }
+                        ].map(t => {
+                          const IconComp = t.icon;
+                          const isActive = outputTab === t.id;
+                          return (
+                            <button key={t.id} onClick={() => setOutputTab(t.id)}
+                              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-lg transition-all ${isActive ? 'bg-[#89b4fa]/20 text-[#89b4fa] border border-[#89b4fa]/30' : 'text-[#a6adc8] hover:text-white hover:bg-white/5'}`}>
+                              <IconComp size={12} />
+                              {t.label}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {compileResult?.params?.length > 0 ? compileResult.params.map((p,i) => (
-                          <span key={i} className="bg-primary/15 text-[#89b4fa] border border-primary/30 px-2 py-0.5 text-[10px] font-mono">${i+1} = "{p}"</span>
-                        )) : <span className="text-[10px] text-surface-variant/60">No parameters</span>}
-                      </div>
+
+                      <button onClick={() => compileResult && copyToClipboard(compileResult.sql)}
+                        className="text-xs text-[#a6adc8] hover:text-white flex items-center gap-1.5 transition-colors px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10">
+                        {copiedCode ? <><Check size={12} className="text-[#a6e3a1]" /> Copied!</> : <><Copy size={12} /> Copy SQL</>}
+                      </button>
+                    </div>
+
+                    {/* Output Content Display */}
+                    <div className="flex-1 p-5 overflow-auto max-h-[420px]">
+                      {compileError ? (
+                        <div className="p-4 bg-[#f38ba8]/10 border border-[#f38ba8]/30 rounded-xl">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="w-2 h-2 rounded-full bg-[#f38ba8]"></span>
+                            <span className="text-xs font-bold text-[#f38ba8] uppercase tracking-wider">Compilation Error</span>
+                          </div>
+                          <pre className="font-mono text-xs text-[#f38ba8] whitespace-pre-wrap leading-relaxed">{compileError}</pre>
+                        </div>
+                      ) : compileResult ? (
+                        <>
+                          {/* TAB 1: SQL Output */}
+                          {outputTab === 'sql' && (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between text-[11px] text-[#a6adc8] font-mono border-b border-white/5 pb-2">
+                                <span>Target Dialect: <strong className="text-[#89b4fa] capitalize">{compilerDialect}</strong></span>
+                                <span>Params Extracted: <strong className="text-[#a6e3a1]">{compileResult.params?.length || 0}</strong></span>
+                              </div>
+                              <pre className="font-mono text-[13px] text-[#a6e3a1] leading-relaxed whitespace-pre p-3 bg-[#181825] rounded-xl border border-white/5">{compileResult.sql}</pre>
+                            </div>
+                          )}
+
+                          {/* TAB 2: Extracted Parameters */}
+                          {outputTab === 'params' && (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between text-xs text-[#a6adc8] mb-2">
+                                <span>Bound Parameters extracted during parsing:</span>
+                                <span className="text-[10px] bg-[#a6e3a1]/10 text-[#a6e3a1] border border-[#a6e3a1]/30 px-2 py-0.5 rounded-full font-bold">100% Isolated</span>
+                              </div>
+                              {compileResult.params?.length > 0 ? (
+                                <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-[#181825]">
+                                  {compileResult.params.map((val, idx) => (
+                                    <div key={idx} className="p-3 flex items-center justify-between font-mono text-xs">
+                                      <span className="text-[#89b4fa] font-bold">${idx + 1}</span>
+                                      <span className="text-[#cdd6f4] bg-white/5 px-2.5 py-1 rounded border border-white/5">"{val}"</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-center py-8 text-xs text-[#a6adc8]">
+                                  No dynamic parameters extracted for this statement.
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* TAB 3: AST & Pipeline Info */}
+                          {outputTab === 'ast' && (
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                                <div className="p-3 bg-[#181825] rounded-xl border border-white/5">
+                                  <div className="text-[#a6adc8] text-[10px] uppercase mb-1">Statement Type</div>
+                                  <div className="text-[#89b4fa] font-bold text-sm uppercase">{compileResult.statementType || 'QUERY'}</div>
+                                </div>
+                                <div className="p-[#181825] p-3 rounded-xl border border-white/5 bg-[#181825]">
+                                  <div className="text-[#a6adc8] text-[10px] uppercase mb-1">Is Mutation (DML)</div>
+                                  <div className={`font-bold text-sm ${compileResult.isMutation ? 'text-[#f38ba8]' : 'text-[#a6e3a1]'}`}>
+                                    {compileResult.isMutation ? 'YES (WRITE)' : 'NO (READ)'}
+                                  </div>
+                                </div>
+                              </div>
+                              {compileResult.analysis && (
+                                <div className="p-3 bg-[#181825] rounded-xl border border-white/5">
+                                  <div className="text-[#a6adc8] text-[10px] uppercase mb-1 font-mono">Compiler Analysis JSON</div>
+                                  <pre className="font-mono text-xs text-[#cdd6f4] overflow-x-auto whitespace-pre">{JSON.stringify(compileResult.analysis, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center h-48 gap-3">
+                          <RefreshCw size={24} className="text-[#89b4fa] animate-spin" />
+                          <span className="text-xs text-[#a6adc8]">Initializing WASM Compiler...</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Bottom Status Bar */}
-                <div className="bg-surface-container px-4 py-2 flex justify-between items-center border-t border-outline-variant/20">
-                  <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1 text-[9px] text-on-surface-variant font-medium"><Shield size={10} className="text-g-green" /> Injection Safe</span>
-                    <span className="flex items-center gap-1 text-[9px] text-on-surface-variant font-medium"><Database size={10} className="text-primary" /> {compilerDialect.toUpperCase()}</span>
-                    {compileResult && (
-                      <span className="text-[9px] text-on-surface-variant font-medium">{compileResult.statementType}</span>
-                    )}
+                {/* Footer Bar */}
+                <div className="bg-[#181926] px-5 py-2.5 flex flex-wrap items-center justify-between border-t border-white/10 text-xs text-[#a6adc8]">
+                  <div className="flex items-center gap-4">
+                    <span className="flex items-center gap-1.5 text-[#a6e3a1] font-semibold">
+                      <Shield size={13} /> Injection-Proof
+                    </span>
+                    <span className="flex items-center gap-1.5 text-white font-medium">
+                      <Database size={13} className="text-[#89b4fa]" /> Dialect: <span className="capitalize">{compilerDialect}</span>
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-outline font-medium">AST Lossless</span>
-                    <span className={`w-1 h-1 animate-pulse ${wasmReady ? 'bg-g-green' : 'bg-g-yellow'}`}></span>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] text-[#a6adc8]">Press <kbd className="px-1.5 py-0.5 bg-white/10 text-white rounded font-mono text-[10px]">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-white/10 text-white rounded font-mono text-[10px]">Enter</kbd> to compile</span>
+                    <button
+                      onClick={() => handleRun()}
+                      disabled={!wasmReady || isCompiling}
+                      className="px-4 py-1 rounded-lg bg-[#89b4fa] text-[#11111b] font-bold text-xs hover:bg-[#89b4fa]/90 transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Play size={12} className="fill-current" /> Run
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1361,4 +1500,5 @@ pipeql supported-dialects`}</CodeBlock>
       </footer>
     </div>
   );
+}
 }

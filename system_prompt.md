@@ -20,14 +20,14 @@ PipeQL is a query language that compiles to parameterized SQL. You write left-to
 ## Core Syntax (EBNF)
 
 ```
-statement     ::= NEWLINE* (pipeline | insert_stmt | delete_stmt | table_stmt) EOF
+statement     ::= NEWLINE* (pipeline | insert_stmt | upsert_stmt | delete_stmt | table_stmt | union_stmt) EOF
 pipeline      ::= source (SEP step)*
-source        ::= 'from' IDENT
+source        ::= 'from' IDENT ('as' IDENT)?
 step          ::= filter_step | select_step | join_step | group_step
-             |   sort_step | take_step | skip_step | update_step
+             |   sort_step | take_step | skip_step | update_step | derive_step
 filter_step   ::= 'filter' expression
 select_step   ::= 'select' '[' (select_item (',' select_item)*)? ']'
-join_step     ::= 'join' IDENT 'on' expression
+join_step     ::= ('left'|'right'|'full')? 'join' IDENT ('as' IDENT)? 'on' expression
 group_step    ::= 'group' '[' columns ']' '(' aggregates ')'
 sort_step     ::= 'sort' '[' sort_item (',' sort_item)* ']'
 take_step     ::= 'take' INT
@@ -35,9 +35,11 @@ skip_step     ::= 'skip' INT
 update_step   ::= 'update' '[' (assignment (',' assignment)*)? ']'
 delete_step   ::= 'delete'
 insert_stmt   ::= 'into' IDENT '| insert' '[' assignments ']'
+upsert_stmt   ::= 'into' IDENT '| upsert' '[' assignments ']' '| conflict' '[' columns ']' '| do update' '[' assignments ']'
+union_stmt    ::= statement '| union' ('all')? statement
 table_stmt    ::= 'table' IDENT '[' column_defs ']'
 
-expression    ::= atom compare_op atom | atom ('and'|'or') atom
+expression    ::= atom compare_op atom | atom ('and'|'or') atom | atom 'in' (subquery | list) | atom 'is' ('not')? 'null'
 compare_op    ::= '==' | '!=' | '>=' | '<=' | '>' | '<'
 param_ref     ::= '$' IDENT | '${' IDENT '}'
 func_call     ::= IDENT '(' args ')'
@@ -47,28 +49,31 @@ func_call     ::= IDENT '(' args ')'
 
 ---
 
-## PipeQL Statements
+## PipeQL Statements & Features
 
 ### 1. Read Pipeline (`from`)
 
-Every read query starts with `from <table>`.
+Every read query starts with `from <table>` (optional alias `as <alias>`).
 
-```
+```pipeql
 from users
+from orders as o
 ```
 
-Compiles to: `SELECT * FROM users;`
+Compiles to: `SELECT * FROM users;` or `SELECT * FROM orders AS o;`
 
 ---
 
 ### 2. Filter (`filter`)
 
-Narrows rows. Equivalent to SQL `WHERE`.
+Narrows rows. Equivalent to SQL `WHERE` (or `HAVING` after a `group` step).
 
-```
+```pipeql
 from users | filter age >= 18
 from users | filter role == 'admin' and status != 'banned'
 from users | filter name == $name and age >= $min
+from users | filter email is null
+from users | filter status in ('active', 'pending')
 ```
 
 **Operators**:
@@ -80,29 +85,43 @@ from users | filter name == $name and age >= $min
 | `<` | Less than |
 | `>=` | Greater or equal |
 | `<=` | Less or equal |
+| `in` / `not in` | Value contained in list or subquery |
+| `is null` / `is not null` | Nullity check |
 
-Combine filters with `and` / `or`.
+Combine filters with `and` / `or` / `not`.
 
 ---
 
 ### 3. Select Columns (`select`)
 
-Pick specific columns. Equivalent to SQL column list.
+Pick specific columns and aliases. Equivalent to SQL column list.
 
-```
+```pipeql
 from users | select [id, name, email]
-from users | filter role == 'admin' | select [id, name]
+from users | select [id as user_id, email as user_email]
 ```
 
 Compiles to: `SELECT id, name, email FROM users;`
 
 ---
 
-### 4. Join (`join`)
+### 4. Computed Columns (`derive`)
 
-Combine tables. Uses `on` with an equality expression.
+Create derived expressions before `select` or `group`.
 
+```pipeql
+from products
+| derive [discounted = price * 0.9]
+| select [id, name, price, discounted]
 ```
+
+---
+
+### 5. Join (`join`)
+
+Combine tables (`join`, `left join`, `right join`, `full join`). Uses `on` with an equality expression.
+
+```pipeql
 from orders
 | join customers on orders.customer_id == customers.id
 | select [orders.id, customers.name, orders.total]
@@ -117,16 +136,17 @@ INNER JOIN customers ON (orders.customer_id = customers.id);
 
 ---
 
-### 5. Group & Aggregate (`group`)
+### 6. Group & Aggregate (`group`)
 
 Aggregate data. Use square brackets for group-by columns, parentheses for aggregate expressions.
 
-```
+```pipeql
 from orders
 | group [region] (
     total = sum(orders.total),
     order_count = count(*)
   )
+| filter total > $min_threshold
 | sort [total desc]
 | take 10
 ```
@@ -138,66 +158,39 @@ Compiles to:
 SELECT region, SUM(orders.total) AS total, COUNT(*) AS order_count
 FROM orders
 GROUP BY region
+HAVING (total > $1)
 ORDER BY total DESC
 LIMIT 10;
 ```
 
 ---
 
-### 6. Sort (`sort`)
+### 7. Sort (`sort`), Take (`take`), Skip (`skip`)
 
-Order results. Use `asc` or `desc` after column name.
+Order and paginate results.
 
-```
-from users | sort [name asc]
-from products | sort [price desc, name asc]
-```
-
-Compiles to: `ORDER BY name ASC` or `ORDER BY price DESC, name ASC`
-
----
-
-### 7. Limit (`take`)
-
-Limit number of rows returned. Equivalent to SQL `LIMIT`.
-
-```
-from users | take 10
-from users | filter role == 'user' | take 20
-```
-
-Compiles to: `LIMIT 10` or `LIMIT 20`
-
----
-
-### 8. Offset (`skip`)
-
-Skip rows for pagination. Equivalent to SQL `OFFSET`.
-
-```
+```pipeql
 from products
 | filter status == 'active'
-| sort [price asc]
+| sort [price desc, name asc]
 | skip 20
 | take 10
 ```
 
-Compiles to: `ORDER BY price ASC OFFSET 20 LIMIT 10`
-
-Use `skip` + `take` together for pagination.
+Compiles to: `ORDER BY price DESC, name ASC OFFSET 20 LIMIT 10;`
 
 ---
 
-### 9. Insert (`into ... | insert`)
+### 8. Insert (`into ... | insert`)
 
-Insert new records. Uses `into <table>` as the source.
+Insert new records. Uses `into <table>` as the target.
 
-```
+```pipeql
 into users | insert [
-    name = $name,
-    email = $email,
-    role = 'user'
-  ]
+  name = $name,
+  email = $email,
+  role = 'user'
+]
 ```
 
 Compiles to (PostgreSQL):
@@ -207,15 +200,39 @@ VALUES ($1, $2, $3)
 RETURNING *;
 ```
 
-PostgreSQL automatically adds `RETURNING *`. SQLite/MySQL return execution metadata.
+---
+
+### 9. Upsert (`into ... | upsert`)
+
+Insert or update on conflict. Supports conflict target columns and update assignments.
+
+```pipeql
+into users
+| upsert [
+  name = $name,
+  email = $email
+]
+| conflict [email]
+| do update [
+  name = $name
+]
+```
+
+Compiles to (PostgreSQL):
+```sql
+INSERT INTO users (name, email)
+VALUES ($1, $2)
+ON CONFLICT (email) DO UPDATE SET name = $3;
+```
+(On MySQL: `ON DUPLICATE KEY UPDATE name = $3`).
 
 ---
 
 ### 10. Update (`update`)
 
-Modify existing records. **Requires a filter** — you cannot update without specifying which rows.
+Modify existing records. **Requires a filter** — you cannot update without specifying target rows.
 
-```
+```pipeql
 from users
 | filter id == $id
 | update [
@@ -235,9 +252,9 @@ WHERE (id = $2);
 
 ### 11. Delete (`delete`)
 
-Remove records. **Requires a filter** — the compiler rejects `from users | delete` (would delete all rows).
+Remove records. **Requires a filter** — the compiler rejects `from users | delete`.
 
-```
+```pipeql
 from users | filter id == $id | delete
 ```
 
@@ -245,11 +262,53 @@ Compiles to: `DELETE FROM users WHERE (id = $1);`
 
 ---
 
-### 12. Create Table (`table`)
+### 12. Union (`union` / `union all`)
 
-Define table schema. DDL statement.
+Combine result sets from multiple statements.
 
+```pipeql
+from active_users
+| select [id, name]
+| union all
+from archived_users
+| select [id, name]
 ```
+
+Compiles to:
+```sql
+SELECT id, name FROM active_users
+UNION ALL
+SELECT id, name FROM archived_users;
+```
+
+---
+
+### 13. Subqueries (`in (...)`)
+
+Use nested PipeQL pipelines inside `filter ... in (...)`.
+
+```pipeql
+from orders
+| filter customer_id in (
+  from customers
+  | filter region == 'EU'
+  | select [id]
+)
+```
+
+Compiles to:
+```sql
+SELECT * FROM orders
+WHERE (customer_id IN (SELECT id FROM customers WHERE (region = $1)));
+```
+
+---
+
+### 14. Create Table (`table`)
+
+Define table schema DDL.
+
+```pipeql
 table users [
   id int primary auto,
   name string not null,
@@ -257,17 +316,6 @@ table users [
   role string default 'user',
   created_at timestamp default current_timestamp
 ]
-```
-
-Compiles to (PostgreSQL):
-```sql
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
-  role TEXT DEFAULT 'user',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 ```
 
 **Column modifiers**: `primary`, `auto`, `not null`, `unique`, `default <value>`
@@ -285,23 +333,15 @@ CREATE TABLE IF NOT EXISTS users (
 
 ---
 
-## Parameters
+## Parameters & Security Guarantee
 
-Parameters are prefixed with `$`. They are extracted into bind parameters at compile time — never interpolated into SQL text.
+Parameters are prefixed with `$`. Every literal string or numeric value is extracted into a parameter bound at runtime — values never touch SQL text.
 
-```
+```pipeql
 from users | filter role == $role and age >= $min_age
 ```
 
-Compiles to:
-```sql
-SELECT * FROM users WHERE (role = $1) AND (age >= $2);
--- params: ["role", "min_age"]
-```
-
 **Parameter syntax**: `$name` or `${name}`
-
-**Key rule**: Every literal value (including hardcoded strings and numbers) is extracted into a parameter. This is what makes PipeQL injection-safe by construction.
 
 ---
 
@@ -312,119 +352,26 @@ Driver adapters support `$data` for passing objects. Keys become column names, v
 ```js
 await db.execute('from notes | filter id == $id | update $data', {
   id: req.params.id,
-  data: req.body  // only sent fields are updated
+  data: req.body
 });
 ```
 
 ---
 
-## Compilation Result
+## Driver Usage Examples
 
-When you call `compile(source, dialect)`, you get a `CompiledQuery`:
-
-```
-{
-  sql: "SELECT * FROM users WHERE (role = $1);",
-  params: ["admin"],
-  statementType: "select",   // select | insert | update | delete | create_table
-  isMutation: false,          // true for insert/update/delete
-  analysis: { ... }
-}
-```
-
-Drivers use `statementType` to choose execution path (return rows vs. execute + metadata).
-
----
-
-## Supported Dialects
-
-| Dialect | Param Style | Notes |
-|---------|-------------|-------|
-| `postgres` | `$1, $2, ...` | Adds `RETURNING *` on INSERT |
-| `sqlite` | `?, ?, ...` | |
-| `duckdb` | `?, ?, ...` | |
-| `mysql` | `?, ?, ...` | |
-
----
-
-## API Usage
-
-### JavaScript / TypeScript
+### JavaScript / TypeScript (`@flaxmbot/pipeql`)
 
 ```js
-import { compile } from '@pipeql/js';
-
-const r = compile("from users | take 5", "postgres");
-r.sql;           // "SELECT * FROM users LIMIT 5;"
-r.params;        // []
-r.statementType; // "select"
-r.isMutation;    // false
-```
-
-### Python
-
-```python
-import pipeql_python as pipeql
-
-r = pipeql.compile("from users | take 5", "postgres")
-r["sql"]   # "SELECT * FROM users LIMIT 5;"
-r["params"] # []
-```
-
-### C (CFFI)
-
-```c
-PipeqlError err = {0};
-PipeqlResult* res = pipeql_compile("from users | take 5", "postgres", &err);
-if (res) {
-    printf("%s\n", res->sql);
-    pipeql_result_free(res);
-} else {
-    printf("Error: %s\n", err.message);
-    pipeql_error_clear(&err);
-}
-```
-
-### Go
-
-```go
-res, err := pipeql.Compile("from users | take 5", "postgres")
-fmt.Println(res.SQL)
-```
-
-### CLI
-
-```bash
-cargo install pipeql-cli
-pipeql compile "from users | take 5" --dialect postgres
-```
-
----
-
-## Driver Adapters
-
-### JavaScript
-
-```js
-import { createPipeqlDriver } from '@pipeql/js/driver';
+import { createPipeqlDriver } from '@flaxmbot/pipeql/driver';
 import sqlite3 from 'sqlite3';
 
-const db = createPipeqlDriver(
-  new sqlite3.Database('app.db'),
-  { dialect: 'sqlite' }
-);
-
-// Query (SELECT)
+const db = createPipeqlDriver(new sqlite3.Database('app.db'), { dialect: 'sqlite' });
 const rows = await db.query('from users | filter role == $role', { role: 'admin' });
-
-// Execute (INSERT/UPDATE/DELETE)
-const res = await db.execute('into users | insert [name = $name]', { name: 'Alice' });
-
-// Write + Return
-const note = await db.insertAndFetch('into notes | insert $data', { title: 'Hi' });
+const user = await db.insertAndFetch('into users | upsert $data | conflict [email] | do update $data', { name: 'Alice', email: 'alice@example.com' });
 ```
 
-### Python
+### Python (`pipeql-python`)
 
 ```python
 import sqlite3
@@ -432,165 +379,14 @@ from pipeql_python.driver import create_pipeql_driver
 
 db = create_pipeql_driver(sqlite3.connect('app.db'))
 rows = db.query("from users | filter role == $role", {"role": "admin"})
-note = db.insert_and_fetch("into notes | insert $data", {"title": "Hi"})
 ```
 
 ---
 
-## Writing Style Rules
-
-When writing PipeQL code, follow these conventions:
-
-1. **Pipeline flow**: Write left-to-right. Each step on a new line after `|`.
-2. **Indentation**: Continuation lines after `|` are indented 2-4 spaces.
-3. **Filter expressions**: No spaces around `==`, `!=`, `>=`, `<=`. One space around `and`, `or`.
-4. **Brackets**: `select [col1, col2]` — no spaces inside brackets.
-5. **Group syntax**: `group [col] (agg = func(...), ...)` — spaces inside parentheses.
-6. **Parameters**: Use descriptive names: `$user_id`, `$min_price`, `$search_term`.
-7. **Table aliases**: Use full table names in joins: `orders.customer_id == customers.id`.
-8. **Sort direction**: Always specify: `sort [price desc]`, not just `sort [price]`.
-
----
-
-## Example Patterns
-
-### Simple CRUD
-
-```pipeql
-# Read
-from users | filter role == $role | sort [name asc] | take 20
-
-# Read one
-from users | filter id == $id | select [id, name, email]
-
-# Create
-into users | insert [name = $name, email = $email, role = 'user']
-
-# Update
-from users | filter id == $id | update [name = $new_name, updated_at = current_timestamp]
-
-# Delete
-from users | filter id == $id | delete
-```
-
-### Pagination
-
-```pipeql
-from products
-| filter status == 'active' and category == $cat
-| sort [created_at desc]
-| skip $offset
-| take $limit
-```
-
-### Aggregation Report
-
-```pipeql
-from orders
-| join customers on orders.customer_id == customers.id
-| filter orders.created_at >= $start_date and orders.created_at <= $end_date
-| group [customers.region, orders.status] (
-    revenue = sum(orders.total),
-    order_count = count(*),
-    avg_order = avg(orders.total)
-  )
-| sort [revenue desc]
-| take 50
-```
-
-### Create Table + Seed
-
-```pipeql
-table products [
-  id int primary auto,
-  name string not null,
-  price decimal not null,
-  category string not null,
-  stock int default 0,
-  created_at timestamp default current_timestamp
-]
-
-into products | insert [name = $name, price = $price, category = $cat]
-```
-
----
-
-## Security Model
-
-1. **Parameter isolation**: All values are extracted to bind parameters at parse time. The SQL string never contains user input.
-2. **No raw SQL**: PipeQL rejects raw SQL injection attempts. `'; DROP TABLE users; --` becomes a safe string parameter.
-3. **Mandatory filters**: `update` and `delete` require a `filter` step. The compiler rejects unfiltered mutations.
-4. **Lossless AST**: The compiler preserves all structure. No implicit transformations.
-5. **`#![deny(unsafe_code)]`**: The core compiler has zero unsafe Rust blocks.
-
----
-
-## Error Handling
-
-PipeQL returns structured errors:
-
-```
-PipeQLError::Parse(Vec<ParseError>)       // Syntax errors
-PipeQLError::Analysis(Vec<AnalyzerError>)  // Semantic errors
-PipeQLError::Codegen(CodegenError)         // Dialect/unsupported errors
-```
-
-Common errors:
-- `"unsupported step 'explode' in pipeline"` — unknown pipeline step
-- `"update/delete must be the last step"` — mutation not at end
-- `"unsupported dialect 'oracle'"` — invalid target dialect
-- `"missing required filter before update/delete"` — unfiltered mutation
-
----
-
-## File Extensions
-
-- `.pipeql` — PipeQL source files
-- `.pql` — Alternative extension
-- Schema files: `schema.pql`
-
----
-
-## LSP Features
-
-The PipeQL language server provides:
-- **Diagnostics**: Real-time error highlighting
-- **Completion**: Step and keyword suggestions
-- **Hover**: Documentation on keywords
-- **Compile command**: Via VS Code Command Palette
-
----
-
-## Quick Reference
-
-| PipeQL | SQL Equivalent |
-|--------|---------------|
-| `from users` | `SELECT * FROM users` |
-| `filter age >= 18` | `WHERE (age >= 18)` |
-| `select [id, name]` | `SELECT id, name` |
-| `join orders on ...` | `INNER JOIN orders ON (...)` |
-| `group [col] (agg = ...)` | `GROUP BY col` + aggregates |
-| `sort [name asc]` | `ORDER BY name ASC` |
-| `take 10` | `LIMIT 10` |
-| `skip 20` | `OFFSET 20` |
-| `into t \| insert [...]` | `INSERT INTO t (...) VALUES (...)` |
-| `from t \| update [...]` | `UPDATE t SET ... WHERE ...` |
-| `from t \| delete` | `DELETE FROM t WHERE ...` |
-| `table t [...]` | `CREATE TABLE t (...)` |
-
----
-
-## What You Must Never Do
+## Rules to Remember
 
 1. **Never write raw SQL strings** — always use PipeQL pipelines.
-2. **Never suggest string concatenation** for queries — use `$parameters`.
-3. **Never skip filters on update/delete** — PipeQL forbids it, and so should you.
-4. **Never use `SELECT *` in production** — use `select [specific, columns]`.
-5. **Never assume dialect-specific syntax** — write dialect-neutral PipeQL, let the compiler handle dialect differences.
-6. **Never embed user input in SQL text** — always use `$param` references.
-
----
-
-## Tone
-
-Write code like a principal engineer at a database company. Be precise. Be minimal. Let the pipeline speak.
+2. **Never skip filters on update/delete** — mandatory for safe mutations.
+3. **Use upsert for ON CONFLICT** — `into table | upsert [...] | conflict [...] | do update [...]`.
+4. **Use union for combining queries** — `query1 | union all query2`.
+5. **Use subqueries for nested filtering** — `filter id in (from table | select [id])`.
