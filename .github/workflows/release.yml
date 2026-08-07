@@ -41,7 +41,7 @@ jobs:
           path: js/*.tgz
 
   publish-pypi:
-    name: Publish pipeql-python to PyPI
+    name: Publish pipeql to PyPI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

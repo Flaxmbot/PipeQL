@@ -698,6 +698,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pipeql"
+version = "1.0.0"
+dependencies = [
+ "pipeql-core",
+ "pyo3",
+ "serde_json",
+]
+
+[[package]]
 name = "pipeql-cffi"
 version = "1.0.0"
 dependencies = [
@@ -734,15 +743,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-lsp",
-]
-
-[[package]]
-name = "pipeql-python"
-version = "1.0.0"
-dependencies = [
- "pipeql-core",
- "pyo3",
- "serde_json",
 ]
 
 [[package]]

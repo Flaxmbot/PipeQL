@@ -1,9 +1,9 @@
 [package]
-name = "pipeql-python"
+name = "pipeql"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Python bindings for PipeQL (pip package: pipeql-python)"
+description = "Python bindings for PipeQL (pip package: pipeql)"
 readme = "README.md"
 publish = false
 

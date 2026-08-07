@@ -6,9 +6,9 @@
 
 <p align="center">
   <a href="https://github.com/Flaxmbot/PipeQL/actions"><img src="https://img.shields.io/github/actions/workflow/status/Flaxmbot/PipeQL/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI Status" /></a>
-  <a href="https://npmjs.com/package/pipeql"><img src="https://img.shields.io/npm/v/pipeql?style=flat-square&logo=npm&logoColor=white&color=38bdf8" alt="npm" /></a>
-  <a href="https://pypi.org/project/pipeql-python"><img src="https://img.shields.io/pypi/v/pipeql-python?style=flat-square&logo=pypi&logoColor=white&color=818cf8" alt="PyPI" /></a>
-  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/release-v1.0.0-10b981?style=flat-square&logo=github" alt="Release" /></a>
+  <a href="https://npmjs.com/package/@flaxmbot/pipeql"><img src="https://img.shields.io/npm/v/@flaxmbot/pipeql?style=flat-square&logo=npm&logoColor=white&color=38bdf8" alt="npm" /></a>
+  <a href="https://pypi.org/project/pipeql"><img src="https://img.shields.io/pypi/v/pipeql?style=flat-square&logo=pypi&logoColor=white&color=818cf8" alt="PyPI" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/release-v1.0.1-10b981?style=flat-square&logo=github" alt="Release" /></a>
   <a href="https://github.com/Flaxmbot/PipeQL/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-c084fc?style=flat-square" alt="License" /></a>
 </p>
 
@@ -54,8 +54,8 @@ LIMIT 10;
 | Language / SDK | Package / Binding | Status | Dialects Supported |
 | :--- | :--- | :--- | :--- |
 | **Rust** | `pipeql-core` (Native Crate) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
-| **JavaScript / TypeScript** | `pipeql` (WASM) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
-| **Python** | `pipeql-python` (PyO3 ABI3) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
+| **JavaScript / TypeScript** | `@flaxmbot/pipeql` (WASM) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
+| **Python** | `pipeql` (PyO3 ABI3) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
 | **C / C++** | `libpipeql` (CFFI Header) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
 | **Go** | `pipeql/go` (CGO Bridge) | ✅ **Supported** | Postgres, SQLite, DuckDB, MySQL |
 
@@ -65,7 +65,7 @@ LIMIT 10;
 
 ### 1. Pre-built CLI & Native Shared Libraries
 
-Download pre-compiled release binaries and shared CFFI libraries directly from [GitHub Releases (v1.0.0)](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.0):
+Download pre-compiled release binaries and shared CFFI libraries directly from [GitHub Releases (v1.0.1)](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1):
 
 | Platform | CLI Executable | Shared Library (CFFI / Go) |
 | :--- | :--- | :--- |
@@ -107,15 +107,15 @@ Install from npm or from the GitHub release package:
 
 ```bash
 # Install via npm
-npm install pipeql
+npm install @flaxmbot/pipeql
 
 # Or install directly from GitHub release tarball
-npm install https://github.com/Flaxmbot/PipeQL/releases/download/v1.0.0/pipeql-1.0.0.tgz
+npm install https://github.com/Flaxmbot/PipeQL/releases/download/v1.0.1/flaxmbot-pipeql-1.0.1.tgz
 ```
 
 #### Usage:
 ```javascript
-import { compile } from 'pipeql';
+import { compile } from '@flaxmbot/pipeql';
 
 const { sql, params } = compile(
   "from notes | filter category == $cat | sort [updated_at desc]",
@@ -128,13 +128,13 @@ console.log(params); // ["cat"]
 
 ---
 
-### 4. Python (`pipeql-python`)
+### 4. Python (`pipeql`)
 
 Install from PyPI or install the release wheel:
 
 ```bash
 # Install via pip
-pip install pipeql-python
+pip install pipeql
 
 # Or build locally using maturin
 pip install maturin
@@ -244,10 +244,10 @@ PipeQL is designed for first-class AI code generation. The repository includes a
   ```
 
 - **JavaScript / Node.js**:
-  Included in the `pipeql` npm package at `pipeql/ai/system_prompt.md`.
+  Included in the `@flaxmbot/pipeql` npm package at `@flaxmbot/pipeql/ai/system_prompt.md`.
 
 - **GitHub Release / Direct Link**:
-  Download [pipeql-ai-system-prompt.md](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.0) or fetch directly via raw URL:
+  Download [pipeql-ai-system-prompt.md](https://github.com/Flaxmbot/PipeQL/releases/tag/v1.0.1) or fetch directly via raw URL:
   `https://raw.githubusercontent.com/Flaxmbot/PipeQL/master/ai/system_prompt.md`
 
 ---
