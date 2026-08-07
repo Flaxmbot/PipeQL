@@ -209,6 +209,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -216,13 +218,59 @@ jobs:
           merge-multiple: true
       - name: Add AI System Prompt to Release Assets
         run: cp ai/system_prompt.md artifacts/pipeql-ai-system-prompt.md
+      - name: Generate Changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          VERSION=${GITHUB_REF_NAME}
+          {
+            echo "# PipeQL ${VERSION}"
+            echo ""
+            echo "## Highlights"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log --oneline --no-merges "${PREV_TAG}..HEAD" | head -50
+            else
+              git log --oneline --no-merges HEAD | head -50
+            fi
+            echo ""
+            echo "## Install"
+            echo ""
+            echo '```sh'
+            echo "# Rust / CLI"
+            echo "cargo install pipeql-cli"
+            echo ""
+            echo "# JavaScript / TypeScript"
+            echo "npm install @pipeql/js"
+            echo ""
+            echo "# Python"
+            echo "pip install pipeql-python"
+            echo ""
+            echo "# C/C++ (from source)"
+            echo "cargo build --release -p pipeql-cffi"
+            echo ""
+            echo "# Go"
+            echo "go get github.com/Flaxmbot/PipeQL/go@${VERSION}"
+            echo '```'
+            echo ""
+            echo "## Supported Dialects"
+            echo ""
+            echo "PostgreSQL, SQLite, DuckDB, MySQL"
+            echo ""
+            echo "## Links"
+            echo ""
+            echo "- [Documentation](https://pipeql.vercel.app)"
+            echo "- [GitHub](https://github.com/Flaxmbot/PipeQL)"
+            echo "- [crates.io](https://crates.io/crates/pipeql-core)"
+            echo "- [npm](https://www.npmjs.com/package/@pipeql/js)"
+            echo "- [PyPI](https://pypi.org/project/pipeql-python/)"
+          } > artifacts/CHANGELOG.md
       - name: List artifacts
         run: find artifacts -type f
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: artifacts/CHANGELOG.md
           files: |
             artifacts/*
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

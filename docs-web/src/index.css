@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.material-symbols-outlined[data-weight="fill"] {
+  font-variation-settings: 'FILL' 1;
+}
+
+/* Hide scrollbars on page containers, not code blocks */
+body, main, aside, .overflow-y-auto {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+body::-webkit-scrollbar, main::-webkit-scrollbar, aside::-webkit-scrollbar {
+  display: none;
+}
+
+/* Code blocks: thin subtle scrollbar for horizontal scroll */
+pre {
+  scrollbar-width: thin;
+  scrollbar-color: #c2c6d5 transparent;
+}
+pre::-webkit-scrollbar {
+  display: block;
+  height: 4px;
+}
+pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+pre::-webkit-scrollbar-thumb {
+  background: #c2c6d5;
+  border-radius: 4px;
+}
+pre::-webkit-scrollbar-thumb:hover {
+  background: #9aa0a6;
+}
+
+/* Scroll hint gradient on code blocks */
+.code-scroll-wrapper {
+  position: relative;
+}
+.code-scroll-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 32px;
+  background: linear-gradient(to right, transparent, #ffffff);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 0 1rem 1rem 0;
+}
+.code-scroll-wrapper.scrollable::after {
+  opacity: 1;
+}
+
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Ambient subtle grid overlay */
+.bg-grid-pattern {
+  background-image: linear-gradient(to right, rgba(0,0,0,0.02) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(0,0,0,0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* G-Colors */
+.g-blue { color: #4285F4; }
+.g-red { color: #EA4335; }
+.g-yellow { color: #FBBC05; }
+.g-green { color: #34A853; }
+
+.hover-lift {
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-5px);
+}
+
+/* Code block container with copy button */
+.code-block-wrapper {
+  position: relative;
+}
+.code-block-wrapper .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-block-wrapper:hover .copy-btn {
+  opacity: 1;
+}

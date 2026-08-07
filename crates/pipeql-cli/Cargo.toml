@@ -10,7 +10,7 @@ name = "pipeql"
 path = "src/main.rs"
 
 [dependencies]
-pipeql-core.workspace = true
+pipeql-core = { workspace = true, features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

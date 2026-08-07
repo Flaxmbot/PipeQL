@@ -18,6 +18,7 @@ pub struct Compiled {
     statement_type: StatementType,
     is_mutation: bool,
     analysis: JsValue,
+    parameter_count: usize,
 }
 
 #[wasm_bindgen]
@@ -35,16 +36,22 @@ impl Compiled {
     }
 
     /// The statement kind: "select", "insert", "update", "delete",
-    /// "create_table".
+    /// "create_table", "upsert", "union".
     #[wasm_bindgen(getter)]
     pub fn statement_type(&self) -> String {
         self.statement_type.as_str().to_string()
     }
 
-    /// True for mutations (insert/update/delete).
+    /// True for mutations (insert/update/delete/upsert).
     #[wasm_bindgen(getter)]
     pub fn is_mutation(&self) -> bool {
         self.is_mutation
+    }
+
+    /// Number of distinct bind parameters.
+    #[wasm_bindgen(getter)]
+    pub fn parameter_count(&self) -> usize {
+        self.parameter_count
     }
 
     /// The full analysis document (param map, inferred types, occurrences).
@@ -56,6 +63,7 @@ impl Compiled {
 
 /// Build a `Compiled` from a core result.
 fn to_compiled(c: pipeql_core::CompiledQuery) -> Compiled {
+    let parameter_count = c.params.len();
     Compiled {
         sql: c.sql,
         params: c
@@ -66,6 +74,7 @@ fn to_compiled(c: pipeql_core::CompiledQuery) -> Compiled {
         statement_type: c.statement_type,
         is_mutation: c.is_mutation,
         analysis: serde_wasm_bindgen::to_value(&c.analysis).unwrap_or(JsValue::NULL),
+        parameter_count,
     }
 }
 

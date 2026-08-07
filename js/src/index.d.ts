@@ -10,7 +10,7 @@
  */
 export type Dialect = "postgres" | "sqlite" | "duckdb" | "mysql";
 /** The kind of statement a compiled query represents. */
-export type StatementType = "select" | "insert" | "update" | "delete" | "create_table";
+export type StatementType = "select" | "insert" | "update" | "delete" | "create_table" | "upsert" | "union";
 export interface ParamMeta {
     name: string;
     ty: string;
@@ -27,7 +27,7 @@ export interface CompileResult {
     params: string[];
     /** Statement kind, so you can dispatch `.all()` vs `.run()` without parsing SQL. */
     statementType: StatementType;
-    /** True for mutations (insert/update/delete). */
+    /** True for mutations (insert/update/delete/upsert). */
     isMutation: boolean;
     /** Full semantic analysis (param map, types, occurrences). */
     analysis: Analysis;
