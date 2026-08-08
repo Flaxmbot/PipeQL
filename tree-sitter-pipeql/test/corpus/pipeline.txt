@@ -1305,3 +1305,173 @@ into notes
   )
 )
 
+
+==================
+Upsert statement
+==================
+
+into users | upsert [id = $id, name = $name] | conflict [id] | do update [name = $name]
+---
+
+(statement
+  (upsert_statement
+    (identifier)
+    (assignment_list
+      (assignment
+        (identifier)
+        (expression
+          (or_expression
+            (and_expression
+              (not_expression
+                (comparison
+                  (additive
+                    (multiplicative
+                      (unary
+                        (primary
+                          (parameter
+                            (identifier))))))))))))
+      (assignment
+        (identifier)
+        (expression
+          (or_expression
+            (and_expression
+              (not_expression
+                (comparison
+                  (additive
+                    (multiplicative
+                      (unary
+                        (primary
+                          (parameter
+                            (identifier)))))))))))))
+    (identifier_list
+      (identifier))
+    (assignment_list
+      (assignment
+        (identifier)
+        (expression
+          (or_expression
+            (and_expression
+              (not_expression
+                (comparison
+                  (additive
+                    (multiplicative
+                      (unary
+                        (primary
+                          (parameter
+                            (identifier)))))))))))))))
+
+==================
+Union statement
+==================
+
+from active_users | select [id, name]
+| union all
+from archived_users | select [id, name]
+---
+
+(statement
+  (union_statement
+    (pipeline
+      (source
+        (identifier))
+      (step
+        (select_step
+          (select_list
+            (select_item
+              (expression
+                (or_expression
+                  (and_expression
+                    (not_expression
+                      (comparison
+                        (additive
+                          (multiplicative
+                            (unary
+                              (primary
+                                (column_ref
+                                  (identifier))))))))))))
+            (select_item
+              (expression
+                (or_expression
+                  (and_expression
+                    (not_expression
+                      (comparison
+                        (additive
+                          (multiplicative
+                            (unary
+                              (primary
+                                (column_ref
+                                  (identifier))))))))))))))))
+    (pipeline
+      (source
+        (identifier))
+      (step
+        (select_step
+          (select_list
+            (select_item
+              (expression
+                (or_expression
+                  (and_expression
+                    (not_expression
+                      (comparison
+                        (additive
+                          (multiplicative
+                            (unary
+                              (primary
+                                (column_ref
+                                  (identifier))))))))))))
+            (select_item
+              (expression
+                (or_expression
+                  (and_expression
+                    (not_expression
+                      (comparison
+                        (additive
+                          (multiplicative
+                            (unary
+                              (primary
+                                (column_ref
+                                  (identifier))))))))))))))))))
+
+==================
+Delete all escape hatch
+==================
+
+from users | delete all
+
+--------------------------------------------------------------------------------
+
+(statement
+  (pipeline
+    (source
+      (identifier))
+    (step
+      (delete_step))))
+
+==================
+Update all escape hatch
+==================
+
+from users | update all [name = $n]
+
+--------------------------------------------------------------------------------
+
+(statement
+  (pipeline
+    (source
+      (identifier))
+    (step
+      (update_step
+        (assignment_list
+          (assignment
+            (identifier)
+            (expression
+              (or_expression
+                (and_expression
+                  (not_expression
+                    (comparison
+                      (additive
+                        (multiplicative
+                          (unary
+                            (primary
+                              (parameter
+                                (identifier)))))))))))))))))

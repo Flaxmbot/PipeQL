@@ -2,12 +2,12 @@
 //!
 //! Compile with:
 //! ```sh
-//! wasm-pack build crates/pipeql-wasm --target web --out-dir ../../js/dist
+//! wasm-pack build crates/pipeql-wasm --target web --release --out-dir ../../js/dist
 //! ```
 
 use wasm_bindgen::prelude::*;
 
-use pipeql_core::{api, PipeQLError, StatementType};
+use pipeql_core::{api, StatementType};
 
 /// A compiled query, exposed to JavaScript as a plain object.
 #[derive(Debug)]
@@ -118,15 +118,7 @@ pub fn parse_ast(source: &str) -> Result<JsValue, JsValue> {
     match api::parse_statement(source) {
         Ok(stmt) => serde_wasm_bindgen::to_value(&stmt)
             .map_err(|e| JsValue::from_str(&format!("serialization error: {e}"))),
-        Err(PipeQLError::Parse(errs)) => {
-            let message = errs
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            Err(JsValue::from_str(&message))
-        }
-        Err(_) => Err(JsValue::from_str("unexpected error")),
+        Err(e) => Err(JsValue::from_str(&e.to_string())),
     }
 }
 

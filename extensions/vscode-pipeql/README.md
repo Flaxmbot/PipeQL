@@ -1,4 +1,13 @@
-# PipeQL for Visual Studio Code
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Flaxmbot/PipeQL/master/logo.png" alt="PipeQL Logo" width="220" />
+</p>
+
+<h1 align="center">PipeQL for Visual Studio Code</h1>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=pipeql.vscode-pipeql"><img src="https://img.shields.io/visual-studio-marketplace/v/pipeql.vscode-pipeql?style=flat-square&logo=visualstudiocode&color=0078d4" alt="VS Marketplace" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-c084fc?style=flat-square" alt="License" /></a>
+</p>
 
 Language support for **PipeQL** — the pipelined, injection-safe, polyglot query
 language.
@@ -10,7 +19,8 @@ language.
 - Language server integration (diagnostics, keyword completion, hover) via the
   `pipeql-lsp` binary.
 - Snippets for pipelines, filters, joins, group-by, derives, sort, pagination,
-  and `insert` / `update` / `delete` / `table` statements.
+  and `insert` / `update` / `delete` / `upsert` / `union` / `table` statements,
+  including the `update-all` / `delete-all` full-table escape hatches.
 - `PipeQL: Compile Query to SQL` command — compiles the active query to a target
   dialect and opens the SQL in a side-by-side editor.
 

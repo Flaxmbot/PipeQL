@@ -182,7 +182,7 @@ fn test_left_join_sql_style_prefix_with_alias() {
 
 #[test]
 fn test_outer_join_types_all_dialects() {
-    for dialect in ["postgres", "sqlite", "duckdb", "mysql"] {
+    for dialect in ["postgres", "sqlite", "duckdb"] {
         for (join_kw, expected) in [
             ("left", "LEFT JOIN"),
             ("right", "RIGHT JOIN"),
@@ -196,6 +196,11 @@ fn test_outer_join_types_all_dialects() {
             );
         }
     }
+    // MySQL does not support FULL OUTER JOIN — verify it errors
+    let result = std::panic::catch_unwind(|| {
+        compile("from a | full join b on a.id == b.a_id", "mysql");
+    });
+    assert!(result.is_err(), "MySQL FULL OUTER JOIN should fail");
 }
 
 #[test]
@@ -1038,8 +1043,50 @@ fn test_update_multiple_filter_steps_are_anded() {
 }
 
 #[test]
+fn test_mutation_requires_preceding_filter() {
+    // Documented safety rule: update/delete need a preceding filter step.
+    for (src, verb) in [
+        ("from notes | delete", "delete"),
+        ("from notes | update [title = $t]", "update"),
+    ] {
+        let err = pipeql_core::api::compile(src, "postgres").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&format!("'{verb}' requires a preceding 'filter' stage")),
+            "{msg}"
+        );
+    }
+
+    // Filtered forms still compile.
+    let (sql, _) = compile_stmt("from notes | filter id == $id | delete", "postgres");
+    assert!(sql.contains("DELETE FROM notes"));
+    let (sql, _) = compile_stmt("from notes | filter id == $id | update [title = $t]", "postgres");
+    assert!(sql.contains("UPDATE notes"));
+}
+
+#[test]
+fn test_mutation_all_escape_hatch() {
+    // `delete all` / `update all [...]` explicitly opt in to full-table
+    // operations and bypass the filter guard.
+    let (sql, _) = compile_stmt("from notes | delete all", "sqlite");
+    assert_eq!(sql, "DELETE FROM notes;");
+    let (sql, _) = compile_stmt("from notes | update all [title = $t]", "postgres");
+    assert_eq!(sql, "UPDATE notes\nSET title = $1;");
+    // A filter combined with `all` still emits the WHERE clause.
+    let (sql, _) = compile_stmt("from notes | filter id == $id | delete all", "sqlite");
+    assert!(sql.contains("DELETE FROM notes"));
+    assert!(sql.contains("WHERE"));
+}
+
+#[test]
 fn test_mutation_rejects_non_filter_steps() {
-    let err = pipeql_core::api::compile("from notes | take 5 | delete", "postgres").unwrap_err();
+    // With a filter present, non-filter steps before the mutation are still
+    // rejected (codegen-level ordering rule).
+    let err = pipeql_core::api::compile(
+        "from notes | filter a == 1 | take 5 | delete",
+        "postgres",
+    )
+    .unwrap_err();
     assert!(format!("{err}").contains("Only filter steps are permitted"));
 }
 

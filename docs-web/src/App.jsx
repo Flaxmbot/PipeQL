@@ -13,13 +13,14 @@ const DOC_SECTIONS_DB = [
   { id: 'tutorial-4', tab: 'docs', title: 'Tutorial: Writing Data', breadcrumbs: 'Docs > Tutorial > Step 4', snippet: 'Insert, update, and delete records using PipeQL mutation syntax.', keywords: ['tutorial', 'insert', 'update', 'delete', 'write', 'mutation'] },
   { id: 'tutorial-5', tab: 'docs', title: 'Tutorial: Real App', breadcrumbs: 'Docs > Tutorial > Step 5', snippet: 'Build a complete CRUD API with PipeQL driver adapters.', keywords: ['tutorial', 'app', 'api', 'crud', 'driver', 'real', 'example'] },
   { id: 'syntax', tab: 'docs', title: 'Query Syntax Reference', breadcrumbs: 'Docs > Syntax Reference > Query Syntax', snippet: 'Formal EBNF grammar for all PipeQL statement types.', keywords: ['syntax', 'grammar', 'ebnf', 'rules', 'pipeline'] },
-  { id: 'mutations', tab: 'docs', title: 'Mutations (DML)', breadcrumbs: 'Docs > Syntax Reference > Mutations', snippet: 'Insert, update, and delete statements with full parameter isolation.', keywords: ['insert', 'update', 'delete', 'mutation', 'dml'] },
+  { id: 'mutations', tab: 'docs', title: 'Mutations (DML)', breadcrumbs: 'Docs > Syntax Reference > Mutations', snippet: 'Insert, update, and delete statements with full parameter isolation.', keywords: ['insert', 'update', 'delete', 'mutation', 'dml', 'all', 'delete all', 'update all', 'escape hatch', 'full table'] },
   { id: 'upsert', tab: 'docs', title: 'Upsert (v1.1)', breadcrumbs: 'Docs > Syntax Reference > Upsert', snippet: 'Insert or update on conflict. Uses ON CONFLICT DO UPDATE or ON DUPLICATE KEY UPDATE.', keywords: ['upsert', 'conflict', 'insert or update', 'on conflict', 'duplicate key', 'v1.1'] },
   { id: 'union', tab: 'docs', title: 'Union (v1.1)', breadcrumbs: 'Docs > Syntax Reference > Union', snippet: 'Combine results from multiple queries with UNION or UNION ALL.', keywords: ['union', 'combine', 'all', 'distinct', 'v1.1'] },
   { id: 'subquery', tab: 'docs', title: 'Subqueries (v1.1)', breadcrumbs: 'Docs > Syntax Reference > Subqueries', snippet: 'Nested queries using IN subquery syntax for filtering.', keywords: ['subquery', 'in', 'nested', 'filter', 'v1.1'] },
   { id: 'ddl', tab: 'docs', title: 'Table Schema (DDL)', breadcrumbs: 'Docs > Syntax Reference > DDL', snippet: 'Create tables with typed columns, primary keys, defaults, and auto-increment.', keywords: ['table', 'ddl', 'create', 'schema', 'column'] },
   { id: 'api-reference', tab: 'docs', title: 'API Reference', breadcrumbs: 'Docs > Polyglot SDKs > API Reference', snippet: 'Compile, parse, and version APIs for JavaScript, Python, C, Go, and CLI.', keywords: ['api', 'compile', 'parse', 'version', 'function', 'sdk', 'cli'] },
   { id: 'drivers', tab: 'docs', title: 'Driver Adapters', breadcrumbs: 'Docs > Polyglot SDKs > Drivers', snippet: 'Zero-boilerplate database wrappers for Node.js and Python.', keywords: ['driver', 'adapter', 'sqlite', 'postgres', 'mysql', 'duckdb'] },
+  { id: 'builder', tab: 'docs', title: 'Fluent Builder (Optional)', breadcrumbs: 'Docs > Polyglot SDKs > Fluent Builder', snippet: 'The PipeQL string DSL is the primary interface. For programmatic composition, every SDK ships an optional fluent builder that composes the same source string.', keywords: ['builder', 'fluent', 'chain', 'compose', 'query builder', 'object insert', 'sdk', 'optional', 'programmatic'] },
   { id: 'lsp', tab: 'docs', title: 'LSP & VS Code', breadcrumbs: 'Docs > Tools & IDE > LSP & VS Code', snippet: 'Language server protocol with diagnostics, completion, and VS Code extension.', keywords: ['lsp', 'vscode', 'extension', 'ide', 'diagnostics'] },
   { id: 'tree-sitter', tab: 'docs', title: 'Tree-sitter Grammar', breadcrumbs: 'Docs > Tools & IDE > Tree-sitter', snippet: 'Syntax highlighting and parsing grammar for PipeQL.', keywords: ['tree-sitter', 'grammar', 'highlight', 'parser'] },
   { id: 'architecture', tab: 'docs', title: 'Architecture & Security', breadcrumbs: 'Docs > Deep Dive > Architecture', snippet: 'Three-stage compilation pipeline with AST-level parameter isolation.', keywords: ['architecture', 'ast', 'compiler', 'isolation', 'security', 'injection', 'rust'] },
@@ -88,7 +89,7 @@ const SIDEBAR = [
   { group: 'Getting Started', items: [['intro','Introduction'],['quickstart','Quick Start']] },
   { group: 'Tutorial', items: [['tutorial-1','Step 1: First Query'],['tutorial-2','Step 2: Filters & Params'],['tutorial-3','Step 3: Joins & Groups'],['tutorial-4','Step 4: Writing Data'],['tutorial-5','Step 5: Real App']] },
   { group: 'Syntax Reference', items: [['syntax','Query Syntax'],['mutations','Mutations (DML)'],['upsert','Upsert (v1.1)'],['union','Union (v1.1)'],['subquery','Subqueries (v1.1)'],['ddl','Table Schema (DDL)']] },
-  { group: 'Polyglot SDKs', items: [['api-reference','API Reference'],['drivers','Driver Adapters']] },
+  { group: 'Polyglot SDKs', items: [['api-reference','API Reference'],['drivers','Driver Adapters'],['builder','Fluent Builder (Optional)']] },
   { group: 'Tools & IDE', items: [['lsp','LSP & VS Code'],['tree-sitter','Tree-sitter']] },
   { group: 'Deep Dive', items: [['architecture','Architecture'],['contributing','Contributing']] }
 ];
@@ -201,7 +202,7 @@ export default function App() {
     <aside className="hidden lg:flex flex-col w-56 shrink-0 self-start sticky top-[52px] h-[calc(100vh-52px)] py-5 bg-background border-r border-surface-container overflow-y-auto" style={{scrollbarWidth:'none'}}>
       <div className="mb-3 px-4">
         <h2 className="text-base font-bold text-on-surface">Docs</h2>
-        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.5</span>
+        <span className="text-[9px] text-on-surface-variant font-medium mt-0.5 block">v1.1.6</span>
       </div>
       <nav className="flex-1 flex flex-col gap-1">
         {SIDEBAR.map(({ group, items }) => (
@@ -325,7 +326,7 @@ export default function App() {
               <div className="relative z-10 max-w-3xl w-full flex flex-col items-center text-center space-y-5">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-2xl bg-surface-container border border-outline-variant/30 text-on-surface-variant text-[11px] font-semibold fade-in-up cursor-pointer hover:bg-surface-container-high transition-colors"
                   onClick={() => goToDoc('quickstart')}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.5 Polyglot release is live
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>v1.1.6 Polyglot release is live
                 </div>
                 <h1 className="text-5xl md:text-7xl font-bold fade-in-up delay-100 tracking-tight leading-tight select-none">
                   <span className="g-blue inline-block hover:-translate-y-2 transition-transform">P</span>
@@ -685,9 +686,10 @@ SELECT * FROM users WHERE (name = $1) AND (age >= $2)
                     <tbody className="divide-y divide-outline-variant/15 text-on-surface-variant">
                       {[
                         ['int / integer','INTEGER','INTEGER','INTEGER','INT'],
+                        ['float / real','DOUBLE PRECISION','REAL','DOUBLE','DOUBLE'],
                         ['string / text','TEXT','TEXT','VARCHAR','VARCHAR(255)'],
                         ['bool / boolean','BOOLEAN','INTEGER','BOOLEAN','BOOLEAN'],
-                        ['timestamp','TIMESTAMP','DATETIME','TIMESTAMP','TIMESTAMP']
+                        ['timestamp / datetime','TIMESTAMP','DATETIME','TIMESTAMP','TIMESTAMP']
                       ].map(([t,...ds]) => (
                         <tr key={t}><td className="px-4 py-2.5 font-semibold text-primary font-mono text-xs">{t}</td>{ds.map((d,i) => <td key={i} className="px-4 py-2.5">{d}</td>)}</tr>
                       ))}
@@ -1049,11 +1051,27 @@ VALUES (?, ?, ?);`}</CodeBlock>
                     <SectionTitle>UPDATE</SectionTitle>
                     <CodeBlock label="PipeQL">{`from notes | filter id == $id | update [title = $title, updated_at = current_timestamp]`}</CodeBlock>
                     <CodeBlock label="PostgreSQL">{`UPDATE notes SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE (id = $2);`}</CodeBlock>
+                    <Warning type="error">
+                      <strong>Safety guard:</strong> <InlineCode>update</InlineCode> requires a preceding <InlineCode>filter</InlineCode> stage — PipeQL rejects unfiltered updates to prevent accidental mass updates.
+                    </Warning>
+                    <SectionTitle>Update Every Row (escape hatch)</SectionTitle>
+                    <p className="text-sm text-on-surface-variant">To deliberately update every row, write <InlineCode>update all [...]</InlineCode>. This is the explicit opt-in that bypasses the filter guard.</p>
+                    <CodeBlock label="PipeQL">{`from users | update all [plan = $plan]`}</CodeBlock>
+                    <CodeBlock label="PostgreSQL">{`UPDATE users SET plan = $1;`}</CodeBlock>
+                    <p className="text-xs text-on-surface-variant">If a <InlineCode>filter</InlineCode> is present alongside <InlineCode>all</InlineCode>, the <InlineCode>WHERE</InlineCode> clause still applies.</p>
                   </div>
                   <div className="space-y-3">
                     <SectionTitle>DELETE</SectionTitle>
                     <CodeBlock label="PipeQL">{`from notes | filter id == $id | delete`}</CodeBlock>
                     <CodeBlock label="PostgreSQL">{`DELETE FROM notes WHERE (id = $1);`}</CodeBlock>
+                    <Warning type="error">
+                      <strong>Safety guard:</strong> <InlineCode>delete</InlineCode> requires a preceding <InlineCode>filter</InlineCode> stage — same enforcement as <InlineCode>update</InlineCode>.
+                    </Warning>
+                    <SectionTitle>Delete Every Row (escape hatch)</SectionTitle>
+                    <p className="text-sm text-on-surface-variant">To deliberately clear a table, write <InlineCode>delete all</InlineCode> — the explicit opt-in that bypasses the filter guard.</p>
+                    <CodeBlock label="PipeQL">{`from users | delete all`}</CodeBlock>
+                    <CodeBlock label="PostgreSQL">{`DELETE FROM users;`}</CodeBlock>
+                    <p className="text-xs text-on-surface-variant">If a <InlineCode>filter</InlineCode> is present alongside <InlineCode>all</InlineCode>, the <InlineCode>WHERE</InlineCode> clause still applies.</p>
                   </div>
                 </div>
               )}
@@ -1308,6 +1326,151 @@ await db.execute('from notes | filter id == $id | update $data', {
   id: req.params.id,
   data: req.body  // only sent fields are updated
 });`}</CodeBlock>
+                </div>
+              )}
+
+              {/* ── FLUENT BUILDER ── */}
+              {activeDocSection === 'builder' && (
+                <div className="space-y-5">
+                  <h1 className="text-3xl font-bold text-on-surface mb-2">Fluent Builder (Optional)</h1>
+                  <p className="text-on-surface-variant text-sm leading-relaxed">
+                    The PipeQL <strong>string DSL is the primary interface</strong>. For most queries
+                    you write the pipeline directly — it is shorter, and just as safe:
+                  </p>
+                  <CodeBlock label="PipeQL (primary interface)">{`from notes
+| filter is_archived == 0
+| sort [created_at desc]
+| take 10`}</CodeBlock>
+                  <p className="text-on-surface-variant text-sm leading-relaxed">
+                    When you need to compose queries <strong>programmatically</strong> — conditional
+                    or looped pipeline stages, or object-style inserts — every SDK additionally ships
+                    an <strong>optional fluent builder</strong> that composes the exact same PipeQL
+                    source string a hand-written query would use. A builder query and a literal
+                    string are <em>provably identical</em>: no dual parser, no semantic drift.
+                  </p>
+                  <p className="text-on-surface-variant text-sm leading-relaxed">
+                    Object inserts and updates accept key → value objects and auto-generate{' '}
+                    <InlineCode>$b0</InlineCode>, <InlineCode>$b1</InlineCode>, ... bind parameters — the{' '}
+                    <InlineCode>$data</InlineCode> ergonomics without needing a driver.
+                  </p>
+
+                  <SectionTitle>Same query, five SDKs</SectionTitle>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <CodeBlock label="Rust">{`use pipeql_core::builder::{Query, Value};
+
+let q = Query::from("notes")
+    .filter("is_archived == 0")
+    .sort(["created_at desc"])
+    .take(10);
+
+let sql = q.compile("postgres").unwrap().sql;
+
+// Object insert -> auto params $b0, $b1...
+let ins = Query::into_("notes").insert([
+    ("title", Value::Str("Hi".into())),
+    ("flag", Value::Int(1)),
+]);
+// source: "into notes | insert [title = $b0, flag = $b1]"`}</CodeBlock>
+                    <CodeBlock label="JavaScript / TypeScript">{`import { PipeQL } from '@flaxmbot/pipeql/builder';
+
+const q = PipeQL.from('notes')
+  .filter('is_archived == 0')
+  .sort(['created_at desc'])
+  .take(10);
+
+const { sql, params } = await q.compile('postgres');
+
+// Object insert -> auto params $b0, $b1...
+const ins = PipeQL.into('notes').insert({ title: 'Hi', flag: 1 });
+// source: "into notes | insert [title = $b0, flag = $b1]"
+// values: { b0: 'Hi', b1: 1 }`}</CodeBlock>
+                    <CodeBlock label="Python">{`from pipeql_python.builder import PipeQL
+
+q = (PipeQL.from_("notes")
+     .filter("is_archived == 0")
+     .sort(["created_at desc"])
+     .take(10))
+
+result = q.compile("postgres")
+rows = db.query(q)  # works through any PipeqlDriver
+
+# Object insert -> auto params $b0, $b1...
+ins = PipeQL.into_("notes").insert({"title": "Hi", "flag": 1})`}</CodeBlock>
+                    <CodeBlock label="Go">{`q := pipeql.From("notes").
+    Filter("is_archived == 0").
+    Sort([]string{"created_at desc"}).
+    Take(10)
+
+res, err := q.Compile("postgres")
+
+// Maps are sorted for deterministic SQL;
+// PairsOf keeps the exact column order.
+ins := pipeql.Into("notes").Insert(
+    pipeql.PairsOf("title", "Hi", "flag", 1))
+// source: "into notes | insert [title = $b0, flag = $b1]"`}</CodeBlock>
+                    <CodeBlock label="C (libpipeql)" className="md:col-span-2">{`PipeqlError err = {0};
+PipeqlQuery* q = pipeql_query_from("notes");
+q = pipeql_query_filter(q, "is_archived == 0");
+q = pipeql_query_sort(q, "created_at desc");
+q = pipeql_query_take(q, 10);
+
+PipeqlResult* res = pipeql_query_compile(q, "postgres", &err);
+printf("%s\\n", res->sql);
+pipeql_result_free(res);
+pipeql_query_free(q);`}</CodeBlock>
+                  </div>
+
+                  <SectionTitle>Stage reference</SectionTitle>
+                  <div className="overflow-x-auto rounded-2xl border border-outline-variant/30">
+                    <table className="w-full text-left text-xs bg-surface-container-lowest">
+                      <thead><tr className="bg-surface border-b border-outline-variant/20 text-[9px] font-bold uppercase tracking-wider"><th className="px-3 py-2">Stage</th><th className="px-3 py-2">Rust / Python</th><th className="px-3 py-2">JS / TS</th><th className="px-3 py-2">Go</th><th className="px-3 py-2">C</th></tr></thead>
+                      <tbody className="divide-y divide-outline-variant/15 text-on-surface-variant">
+                        <tr><td className="px-3 py-2 font-mono text-primary">from</td><td className="px-3 py-2 font-mono">Query::from / from_</td><td className="px-3 py-2 font-mono">PipeQL.from</td><td className="px-3 py-2 font-mono">From</td><td className="px-3 py-2 font-mono">pipeql_query_from</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">into</td><td className="px-3 py-2 font-mono">Query::into_ / into_</td><td className="px-3 py-2 font-mono">PipeQL.into</td><td className="px-3 py-2 font-mono">Into</td><td className="px-3 py-2 font-mono">pipeql_query_into</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">filter</td><td className="px-3 py-2 font-mono">.filter(expr)</td><td className="px-3 py-2 font-mono">.filter(expr)</td><td className="px-3 py-2 font-mono">.Filter(expr)</td><td className="px-3 py-2 font-mono">pipeql_query_filter</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">select / derive / sort</td><td className="px-3 py-2 font-mono">.select([..]) etc.</td><td className="px-3 py-2 font-mono">.select([..]) etc.</td><td className="px-3 py-2 font-mono">.Select(..) etc.</td><td className="px-3 py-2 font-mono">pipeql_query_select</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">take / skip</td><td className="px-3 py-2 font-mono">.take(n) / .skip(n)</td><td className="px-3 py-2 font-mono">.take(n) / .skip(n)</td><td className="px-3 py-2 font-mono">.Take(n) / .Skip(n)</td><td className="px-3 py-2 font-mono">pipeql_query_take</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">joins</td><td className="px-3 py-2 font-mono">.left_join(t, on)</td><td className="px-3 py-2 font-mono">.leftJoin(t, on)</td><td className="px-3 py-2 font-mono">.LeftJoin(t, on)</td><td className="px-3 py-2 font-mono">pipeql_query_left_join</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">group</td><td className="px-3 py-2 font-mono">.group(cols, aggs)</td><td className="px-3 py-2 font-mono">.group(cols, aggs)</td><td className="px-3 py-2 font-mono">.Group(cols, aggs)</td><td className="px-3 py-2 font-mono">pipeql_query_group</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">union</td><td className="px-3 py-2 font-mono">.union(other)</td><td className="px-3 py-2 font-mono">.union(other)</td><td className="px-3 py-2 font-mono">.Union(other)</td><td className="px-3 py-2 font-mono">pipeql_query_union</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">insert / update / delete</td><td className="px-3 py-2 font-mono">.insert({'{...}'}) etc.</td><td className="px-3 py-2 font-mono">.insert({'{...}'}) etc.</td><td className="px-3 py-2 font-mono">.Insert(map) etc.</td><td className="px-3 py-2 font-mono">pipeql_query_insert</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">upsert chain</td><td className="px-3 py-2 font-mono">.upsert / .conflict / .do_update</td><td className="px-3 py-2 font-mono">.upsert / .conflict / .doUpdate</td><td className="px-3 py-2 font-mono">.Upsert / .Conflict / .DoUpdate</td><td className="px-3 py-2 font-mono">pipeql_query_upsert</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">source text</td><td className="px-3 py-2 font-mono">.source()</td><td className="px-3 py-2 font-mono">.source()</td><td className="px-3 py-2 font-mono">.Source()</td><td className="px-3 py-2 font-mono">pipeql_query_source</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">compile</td><td className="px-3 py-2 font-mono">.compile(dialect)</td><td className="px-3 py-2 font-mono">.compile(dialect)</td><td className="px-3 py-2 font-mono">.Compile(dialect)</td><td className="px-3 py-2 font-mono">pipeql_query_compile</td></tr>
+                        <tr><td className="px-3 py-2 font-mono text-primary">bound values</td><td className="px-3 py-2 font-mono">.values</td><td className="px-3 py-2 font-mono">.values</td><td className="px-3 py-2 font-mono">.Values()</td><td className="px-3 py-2 font-mono">—</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <SectionTitle>Drivers accept builders</SectionTitle>
+                  <p className="text-sm text-on-surface-variant leading-relaxed">
+                    In the JS and Python SDKs, driver methods duck-type builders — pass a{' '}
+                    <InlineCode>PipeQL</InlineCode> instance anywhere you would pass a source string,
+                    and builder-generated values merge with your params automatically.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <CodeBlock label="JavaScript">{`import { PipeQL } from '@flaxmbot/pipeql/builder';
+
+const q = PipeQL.from('notes')
+  .filter('category == $cat')
+  .take(10);
+
+const rows = await db.query(q, { cat: 'Ideas' });
+// builder values + explicit params merge`}</CodeBlock>
+                    <CodeBlock label="Python">{`from pipeql_python.builder import PipeQL
+
+q = PipeQL.from_("notes").filter("category == $cat").take(10)
+
+rows = db.query(q, {"cat": "Ideas"})
+# builder values + explicit params merge`}</CodeBlock>
+                  </div>
+
+                  <Warning type="info">
+                    Builder methods take <InlineCode>$name</InlineCode>-style expressions (same as
+                    string queries). Object inserts auto-generate <InlineCode>$b0</InlineCode>,
+                    <InlineCode>$b1</InlineCode>, ... so a compiled insert is ready to bind without
+                    any manual param naming.
+                  </Warning>
                 </div>
               )}
 

@@ -5,7 +5,12 @@
   "from"
   "into"
   "insert"
+  "upsert"
   "update"
+  "union"
+  "conflict"
+  "do"
+  "all"
   "table"
   "filter"
   "select"
@@ -19,8 +24,12 @@
   "as"
 ] @keyword
 
-; `delete` is a named token (bare-string rule), unlike the other step keywords.
+; `delete` is a bare-string rule, unlike the other step keywords.
 (delete_step) @keyword
+
+; upsert / union statements
+(upsert_statement) @keyword
+(union_statement) @keyword
 
 ; DDL column modifiers
 [

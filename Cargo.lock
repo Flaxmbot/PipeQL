@@ -699,7 +699,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pipeql"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "pipeql-core",
  "pyo3",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-cffi"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "pipeql-core",
  "serde_json",
@@ -716,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-cli"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "clap",
  "pipeql-core",
@@ -726,17 +726,16 @@ dependencies = [
 
 [[package]]
 name = "pipeql-core"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "criterion",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]
 name = "pipeql-lsp"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "pipeql-core",
  "serde",
@@ -747,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "pipeql-wasm"
-version = "1.1.5"
+version = "1.1.6"
 dependencies = [
  "js-sys",
  "pipeql-core",
@@ -1086,26 +1085,6 @@ name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
-
-[[package]]
-name = "thiserror"
-version = "2.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "2.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.3",
-]
 
 [[package]]
 name = "tinystr"

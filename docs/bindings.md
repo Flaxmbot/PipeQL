@@ -199,7 +199,7 @@ Fetch from inside a Go module (the binding is a library, not a command, so
 # inside your project (any directory containing a go.mod)
 go get github.com/Flaxmbot/PipeQL/go@latest
 # or pin a specific release
-# go get github.com/Flaxmbot/PipeQL/go@v1.1.5
+# go get github.com/Flaxmbot/PipeQL/go@v1.1.6
 ```
 
 ```go

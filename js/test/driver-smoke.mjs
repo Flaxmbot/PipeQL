@@ -311,4 +311,25 @@ assert.throws(() => createPipeqlDriver({ foo: 1 }), /Unsupported database driver
   assert.deepEqual(c.args, ["A", 0]);
 }
 
+// 21. UNION queries return rows (regression: dispatched as mutation, rows dropped)
+{
+  const raw = fakeSqlite3();
+  const db = createPipeqlDriver(raw);
+  const rows = await db.query(
+    "from active | select [id] | union from archived | select [id]",
+  );
+  assert.deepEqual(rows, [{ id: 1, name: "a" }]);
+  assert.equal(raw.calls[0][0], "all", "union must dispatch to .all(), not .run()");
+  assert.ok(raw.calls[0][1].includes("UNION"), raw.calls[0][1]);
+}
+
+// 22. Missing user param fails loudly (regression: silently bound its name)
+{
+  const db = createPipeqlDriver(fakeSqlite3());
+  await assert.rejects(
+    () => db.query("from users | filter id == $user_id | select [id]", { id: 42 }),
+    /missing value for parameter 'user_id'/,
+  );
+}
+
 console.log("all @pipeql/js/driver smoke tests passed");

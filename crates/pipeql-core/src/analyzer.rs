@@ -39,6 +39,19 @@ impl ValueType {
     }
 }
 
+/// The parameter name a literal binds to in strict (mutation) mode.
+/// `NULL` returns `None` because it is never parameterized — it stays
+/// inline in the emitted SQL.
+fn literal_param_name(lit: &Literal) -> Option<String> {
+    match lit {
+        Literal::String(v) => Some(v.clone()),
+        Literal::Integer(v) => Some(v.to_string()),
+        Literal::Float(v) => Some(v.to_string()),
+        Literal::Bool(v) => Some(v.to_string()),
+        Literal::Null => None,
+    }
+}
+
 impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -282,11 +295,18 @@ impl<'a> Analyzer<'a> {
         // assignments have been inferred.
         let mut filter_exprs: Vec<(&Expr, Span)> = Vec::new();
         let mut update_assignments: Option<&[Assignment]> = None;
+        // Enforce the documented safety rule: `update`/`delete` must be
+        // guarded by at least one preceding `filter` step so a typo can never
+        // turn into an accidental mass UPDATE/DELETE.
+        let mut saw_filter = false;
+        let mut saw_take = false;
+        let mut saw_skip = false;
 
         for step in &pipeline.steps {
             match step {
                 PipelineStep::Filter { expr, span, .. } => {
                     self.step_span = *span;
+                    saw_filter = true;
                     if self.strict_literals {
                         filter_exprs.push((expr, *span));
                     } else {
@@ -294,13 +314,42 @@ impl<'a> Analyzer<'a> {
                     }
                 }
                 PipelineStep::Update {
-                    assignments, span, ..
+                    assignments,
+                    all,
+                    span,
+                    ..
                 } => {
                     self.step_span = *span;
+                    // `update all` is the explicit opt-in full-table form.
+                    if !saw_filter && !*all {
+                        errors.push(AnalyzerError {
+                            message: "'update' requires a preceding 'filter' stage".to_string(),
+                            span: *span,
+                            suggestion: Some(
+                                "Add a filter to prevent accidental mass updates: \
+                                 from <table> | filter ... | update [...] \
+                                 (or write `update all [...]` to explicitly opt in)"
+                                    .to_string(),
+                            ),
+                        });
+                    }
                     update_assignments = Some(assignments);
                 }
-                PipelineStep::Delete { span, .. } => {
+                PipelineStep::Delete { all, span, .. } => {
                     self.step_span = *span;
+                    // `delete all` is the explicit opt-in full-table form.
+                    if !saw_filter && !*all {
+                        errors.push(AnalyzerError {
+                            message: "'delete' requires a preceding 'filter' stage".to_string(),
+                            span: *span,
+                            suggestion: Some(
+                                "Add a filter to prevent accidental mass deletes: \
+                                 from <table> | filter ... | delete \
+                                 (or write `delete all` to explicitly opt in)"
+                                    .to_string(),
+                            ),
+                        });
+                    }
                 }
                 PipelineStep::Select { columns, span, .. } => {
                     self.step_span = *span;
@@ -350,8 +399,35 @@ impl<'a> Analyzer<'a> {
                         self.infer_expr(&mut analysis, &mut errors, &tables, &scope, &item.expr);
                     }
                 }
-                PipelineStep::Take { span, .. } | PipelineStep::Skip { span, .. } => {
+                PipelineStep::Take { span, .. } => {
                     self.step_span = *span;
+                    if saw_take {
+                        errors.push(AnalyzerError {
+                            message: "duplicate 'take' stage; only the last one takes effect"
+                                .to_string(),
+                            span: *span,
+                            suggestion: Some(
+                                "Remove the earlier 'take' or combine into a single 'take N' stage"
+                                    .to_string(),
+                            ),
+                        });
+                    }
+                    saw_take = true;
+                }
+                PipelineStep::Skip { span, .. } => {
+                    self.step_span = *span;
+                    if saw_skip {
+                        errors.push(AnalyzerError {
+                            message: "duplicate 'skip' stage; only the last one takes effect"
+                                .to_string(),
+                            span: *span,
+                            suggestion: Some(
+                                "Remove the earlier 'skip' or combine into a single 'skip N' stage"
+                                    .to_string(),
+                            ),
+                        });
+                    }
+                    saw_skip = true;
                 }
             }
         }
@@ -389,15 +465,11 @@ impl<'a> Analyzer<'a> {
                 // Mutation statements parameterize every literal value so the
                 // SQL text never contains raw data. The parameter name is the
                 // raw value, matching the codegen placeholder value exactly.
-                if self.strict_literals && !matches!(lit, Literal::Null) {
-                    let name = match lit {
-                        Literal::String(v) => v.clone(),
-                        Literal::Integer(v) => v.to_string(),
-                        Literal::Float(v) => v.to_string(),
-                        Literal::Bool(v) => v.to_string(),
-                        Literal::Null => unreachable!("NULL is never parameterized"),
-                    };
-                    analysis.param(&name, ValueType::from_literal(lit), self.step_span);
+                // NULL is never parameterized — it stays inline in the SQL.
+                if self.strict_literals {
+                    if let Some(name) = literal_param_name(lit) {
+                        analysis.param(&name, ValueType::from_literal(lit), self.step_span);
+                    }
                 }
                 ValueType::from_literal(lit)
             }
@@ -419,7 +491,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::InSubquery { expr, subquery, .. } => {
                 self.infer_expr(analysis, errors, tables, scope, expr);
-                // Walk the subquery's expressions for parameter extraction
+                // Walk ALL subquery expressions for parameter extraction
                 for step in &subquery.steps {
                     match step {
                         PipelineStep::Filter { expr, .. } => {
@@ -428,6 +500,29 @@ impl<'a> Analyzer<'a> {
                         PipelineStep::Select { columns, .. } => {
                             for item in columns {
                                 self.infer_expr(analysis, errors, tables, scope, &item.expr);
+                            }
+                        }
+                        PipelineStep::Derive { assignments, .. } => {
+                            for a in assignments {
+                                self.infer_expr(analysis, errors, tables, scope, &a.expr);
+                            }
+                        }
+                        PipelineStep::Sort { items, .. } => {
+                            for item in items {
+                                self.infer_expr(analysis, errors, tables, scope, &item.expr);
+                            }
+                        }
+                        PipelineStep::Join { on, .. } => {
+                            self.infer_expr(analysis, errors, tables, scope, on);
+                        }
+                        PipelineStep::Group { columns, aggregates, .. } => {
+                            for col in columns {
+                                self.infer_expr(analysis, errors, tables, scope, col);
+                            }
+                            for agg in aggregates {
+                                for arg in &agg.args {
+                                    self.infer_expr(analysis, errors, tables, scope, arg);
+                                }
                             }
                         }
                         _ => {}
@@ -485,9 +580,11 @@ impl<'a> Analyzer<'a> {
         if let Some(cat) = self.catalog {
             // A bare column must belong to one of the visible tables.
             let in_scope = scope.iter().any(|s| s.name == id.name);
-            let in_tables = tables
-                .iter()
-                .any(|(_, alias)| cat.has_column(&alias.name, &id.name));
+            let in_tables = tables.iter().any(|(real, alias)| {
+                // Check against both the real table name and the alias
+                cat.has_column(&real.name, &id.name)
+                    || cat.has_column(&alias.name, &id.name)
+            });
             if !in_scope && !in_tables {
                 errors.push(AnalyzerError {
                     message: format!("Unknown column '{}'", id.name),
@@ -669,5 +766,56 @@ mod tests {
     fn test_create_table_has_no_params() {
         let analysis = analyze_statement("table notes [id int primary auto]", None).unwrap();
         assert!(analysis.param_map.is_empty());
+    }
+
+    #[test]
+    fn test_update_delete_require_preceding_filter() {
+        // Documented safety rule: unfiltered mutations are rejected.
+        let err = analyze_statement("from users | update [name = $n]", None).unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| e.message.contains("requires a preceding 'filter' stage")));
+
+        let err = analyze_statement("from users | delete", None).unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| e.message.contains("requires a preceding 'filter' stage")));
+
+        // A filter before the mutation makes it valid.
+        assert!(
+            analyze_statement("from users | filter id == $id | update [name = $n]", None).is_ok()
+        );
+        assert!(analyze_statement("from users | filter id == $id | delete", None).is_ok());
+        // Multiple filters also satisfy the guard.
+        assert!(
+            analyze_statement(
+                "from users | filter a == 1 | filter b == 2 | update [name = $n]",
+                None
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_update_delete_all_escape_hatch() {
+        // `delete all` / `update all [...]` explicitly opt in to full-table
+        // operations and bypass the filter guard.
+        assert!(analyze_statement("from users | delete all", None).is_ok());
+        assert!(
+            analyze_statement("from users | update all [name = $n]", None).is_ok()
+        );
+        // A filter combined with `all` is still fine (filter simply applies).
+        assert!(analyze_statement("from users | filter a == 1 | delete all", None).is_ok());
+    }
+
+    #[test]
+    fn test_filter_after_mutation_still_rejected() {
+        // A filter that appears only after the mutation does not satisfy the
+        // guard (the pipeline is also rejected at codegen for step ordering).
+        let err = analyze_statement("from users | update [name = $n] | filter a == 1", None)
+            .unwrap_err();
+        assert!(err
+            .iter()
+            .any(|e| e.message.contains("requires a preceding 'filter' stage")));
     }
 }

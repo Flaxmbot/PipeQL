@@ -51,7 +51,21 @@ pub trait Dialect {
         &self,
         pipeline: &Pipeline,
         catalog: Option<&crate::analyzer::Catalog>,
-    ) -> Result<(String, Vec<String>), CodegenError>;
+    ) -> Result<(String, Vec<String>), CodegenError> {
+        Analyzer::new(catalog)
+            .analyze(pipeline)
+            .map_err(CodegenError::Analysis)?;
+        self.compile_only(pipeline)
+    }
+
+    /// Compile a pipeline without running analysis. Caller must have already
+    /// validated via [`Dialect::analyze`]. This avoids double analysis when
+    /// the API layer needs both the analysis result and the compiled SQL.
+    fn compile_only(&self, pipeline: &Pipeline) -> Result<(String, Vec<String>), CodegenError> {
+        let mut c = Compiler::new(self.kind());
+        let sql = c.compile_pipeline(pipeline)?;
+        Ok((sql, c.params))
+    }
 
     /// Compile a whole statement (pipeline, insert, or table DDL).
     fn compile_statement(&self, stmt: &Statement) -> Result<(String, Vec<String>), CodegenError> {
@@ -67,6 +81,12 @@ pub trait Dialect {
     ) -> Result<(String, Vec<String>), CodegenError> {
         self.analyze_statement(stmt, catalog)
             .map_err(CodegenError::Analysis)?;
+        self.compile_statement_only(stmt)
+    }
+
+    /// Compile a statement without running analysis. Caller must have already
+    /// validated via [`Dialect::analyze_statement`].
+    fn compile_statement_only(&self, stmt: &Statement) -> Result<(String, Vec<String>), CodegenError> {
         let mut c = Compiler::new(self.kind());
         let sql = c.compile_statement(stmt)?;
         Ok((sql, c.params))
@@ -239,13 +259,33 @@ impl Compiler {
                 let inner = self.compile_expr_inner(expr, substitute);
                 // Compile the subquery pipeline as a nested SELECT
                 let mut sub_compiler = Compiler::new(self.kind);
-                let sub_sql = sub_compiler.compile_pipeline(subquery).unwrap_or_default();
+                sub_compiler.strict_literals = self.strict_literals;
+                let sub_sql_result = sub_compiler.compile_pipeline(subquery);
+                let sub_sql_raw = match sub_sql_result {
+                    Ok(sql) => sql,
+                    Err(e) => return format!("/* subquery error: {e} */"),
+                };
                 // Remove trailing semicolon from subquery
-                let sub_sql = sub_sql.trim_end_matches(';').trim();
-                // Merge subquery params into our params
-                for p in sub_compiler.params {
-                    self.placeholder(&p);
-                }
+                let sub_sql_raw = sub_sql_raw.trim_end_matches(';').trim();
+                // For Postgres, the sub-compiler assigned its own $1, $2 etc.
+                // which are wrong — rewrite them to use the outer compiler's numbering.
+                let sub_sql = if self.kind.placeholder_style() == ParamStyle::Postgres {
+                    let mut result = sub_sql_raw.to_string();
+                    // The sub-compiler's params are in order: sub_compiler.params[0] = $1, etc.
+                    // Replace each $N with the outer compiler's placeholder.
+                    for (i, param_name) in sub_compiler.params.iter().enumerate() {
+                        let old_placeholder = format!("${}", i + 1);
+                        let new_placeholder = self.placeholder(param_name);
+                        result = result.replace(&old_placeholder, &new_placeholder);
+                    }
+                    result
+                } else {
+                    // For ?-style dialects, params are positional — just merge them
+                    for p in &sub_compiler.params {
+                        self.placeholder(p);
+                    }
+                    sub_sql_raw.to_string()
+                };
                 let keyword = if *negated { "NOT IN" } else { "IN" };
                 format!("({inner} {keyword} ({sub_sql}))")
             }
@@ -417,7 +457,14 @@ impl Compiler {
                         JoinType::Inner => "INNER JOIN",
                         JoinType::Left => "LEFT JOIN",
                         JoinType::Right => "RIGHT JOIN",
-                        JoinType::Full => "FULL OUTER JOIN",
+                        JoinType::Full => {
+                            if self.kind == DialectKind::Mysql {
+                                return Err(CodegenError::InvalidAST(
+                                    "MySQL does not support FULL OUTER JOIN — use a UNION of LEFT JOIN and RIGHT JOIN instead".to_string(),
+                                ));
+                            }
+                            "FULL OUTER JOIN"
+                        }
                     };
                     let mut join_sql = format!("{join_type_str} {}", table.name);
                     if let Some(a) = alias {
@@ -433,7 +480,9 @@ impl Compiler {
                 } => {
                     grouped = true;
                     for col in columns {
-                        let col_sql = self.compile_expr(col);
+                        // Use no-sub to avoid substituting derived column definitions
+                        // in GROUP BY (GROUP BY must reference column names, not expressions).
+                        let col_sql = self.compile_expr_no_sub(col);
                         group_by.push(col_sql.clone());
                         aggregate_selects.push(col_sql);
                     }
@@ -488,7 +537,7 @@ impl Compiler {
         // Assemble the final SELECT list.
         let final_selects: Vec<String> = if grouped {
             aggregate_selects
-        } else if has_select {
+        } else if has_select && !select_columns.is_empty() {
             select_columns
         } else if !derived_output.is_empty() {
             let mut v = vec!["*".to_string()];
@@ -557,17 +606,24 @@ impl Compiler {
         let mut filters: Vec<&Expr> = Vec::new();
         let mut assignments: Option<&[Assignment]> = None;
         let mut is_delete = false;
+        let mut is_all = false;
         let mut saw_terminal = false;
 
         for step in &pipeline.steps {
             match step {
                 PipelineStep::Filter { expr, .. } if !saw_terminal => filters.push(expr),
-                PipelineStep::Update { assignments: a, .. } if !saw_terminal => {
+                PipelineStep::Update {
+                    assignments: a,
+                    all,
+                    ..
+                } if !saw_terminal => {
                     assignments = Some(a);
+                    is_all = *all;
                     saw_terminal = true;
                 }
-                PipelineStep::Delete { .. } if !saw_terminal => {
+                PipelineStep::Delete { all, .. } if !saw_terminal => {
                     is_delete = true;
+                    is_all = *all;
                     saw_terminal = true;
                 }
                 PipelineStep::Filter { .. } => {
@@ -591,6 +647,18 @@ impl Compiler {
             return Err(CodegenError::InvalidAST(
                 "mutation pipeline must contain an update or delete step — \
                  use: from <table> | filter ... | update [...] or | delete"
+                    .to_string(),
+            ));
+        }
+
+        // Safety guard (defense-in-depth behind the analyzer check): never
+        // emit an unfiltered mass UPDATE/DELETE — unless the pipeline used the
+        // explicit `update all` / `delete all` opt-in.
+        if filters.is_empty() && !is_all {
+            return Err(CodegenError::InvalidAST(
+                "update/delete requires a preceding 'filter' stage — \
+                 use: from <table> | filter ... | update [...] or | delete \
+                 (or write `update all` / `delete all` to explicitly opt in)"
                     .to_string(),
             ));
         }
@@ -672,11 +740,21 @@ impl Compiler {
             .iter()
             .map(|c| c.name.clone())
             .collect::<Vec<_>>();
-        let update_set = upsert
-            .do_update
-            .iter()
-            .map(|a| format!("{} = {}", a.name.name, self.compile_expr(&a.expr)))
-            .collect::<Vec<_>>();
+        // MySQL ON DUPLICATE KEY UPDATE uses VALUES(col) for the new values;
+        // other dialects use the parameterized expression directly.
+        let update_set = if matches!(self.kind, DialectKind::Mysql) {
+            upsert
+                .do_update
+                .iter()
+                .map(|a| format!("{} = VALUES({})", a.name.name, a.name.name))
+                .collect::<Vec<_>>()
+        } else {
+            upsert
+                .do_update
+                .iter()
+                .map(|a| format!("{} = {}", a.name.name, self.compile_expr(&a.expr)))
+                .collect::<Vec<_>>()
+        };
 
         let mut sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
@@ -791,9 +869,19 @@ impl Compiler {
     fn ddl_default(&self, expr: &Expr) -> Result<String, CodegenError> {
         match expr {
             Expr::Literal(lit) => match lit {
-                Literal::String(v) => Ok(format!("'{v}'")),
+                Literal::String(v) => {
+                    let escaped = v.replace('\'', "''");
+                    Ok(format!("'{escaped}'"))
+                }
                 Literal::Integer(v) => Ok(v.to_string()),
-                Literal::Float(v) => Ok(v.to_string()),
+                Literal::Float(v) => {
+                    let s = format!("{v}");
+                    if s.contains('e') || s.contains('E') {
+                        Ok(format!("{v:.15}"))
+                    } else {
+                        Ok(s)
+                    }
+                }
                 Literal::Bool(v) => Ok(v.to_string()),
                 Literal::Null => Ok("NULL".to_string()),
             },
@@ -829,19 +917,6 @@ impl Dialect for PostgresDialect {
     fn kind(&self) -> DialectKind {
         DialectKind::Postgres
     }
-
-    fn compile_with_catalog(
-        &self,
-        pipeline: &Pipeline,
-        catalog: Option<&crate::analyzer::Catalog>,
-    ) -> Result<(String, Vec<String>), CodegenError> {
-        Analyzer::new(catalog)
-            .analyze(pipeline)
-            .map_err(CodegenError::Analysis)?;
-        let mut c = Compiler::new(self.kind());
-        let sql = c.compile_pipeline(pipeline)?;
-        Ok((sql, c.params))
-    }
 }
 
 pub struct SQLiteDialect;
@@ -853,19 +928,6 @@ impl Dialect for SQLiteDialect {
 
     fn kind(&self) -> DialectKind {
         DialectKind::Sqlite
-    }
-
-    fn compile_with_catalog(
-        &self,
-        pipeline: &Pipeline,
-        catalog: Option<&crate::analyzer::Catalog>,
-    ) -> Result<(String, Vec<String>), CodegenError> {
-        Analyzer::new(catalog)
-            .analyze(pipeline)
-            .map_err(CodegenError::Analysis)?;
-        let mut c = Compiler::new(self.kind());
-        let sql = c.compile_pipeline(pipeline)?;
-        Ok((sql, c.params))
     }
 }
 
@@ -879,19 +941,6 @@ impl Dialect for DuckDBDialect {
     fn kind(&self) -> DialectKind {
         DialectKind::Duckdb
     }
-
-    fn compile_with_catalog(
-        &self,
-        pipeline: &Pipeline,
-        catalog: Option<&crate::analyzer::Catalog>,
-    ) -> Result<(String, Vec<String>), CodegenError> {
-        Analyzer::new(catalog)
-            .analyze(pipeline)
-            .map_err(CodegenError::Analysis)?;
-        let mut c = Compiler::new(self.kind());
-        let sql = c.compile_pipeline(pipeline)?;
-        Ok((sql, c.params))
-    }
 }
 
 pub struct MySQLDialect;
@@ -903,19 +952,6 @@ impl Dialect for MySQLDialect {
 
     fn kind(&self) -> DialectKind {
         DialectKind::Mysql
-    }
-
-    fn compile_with_catalog(
-        &self,
-        pipeline: &Pipeline,
-        catalog: Option<&crate::analyzer::Catalog>,
-    ) -> Result<(String, Vec<String>), CodegenError> {
-        Analyzer::new(catalog)
-            .analyze(pipeline)
-            .map_err(CodegenError::Analysis)?;
-        let mut c = Compiler::new(self.kind());
-        let sql = c.compile_pipeline(pipeline)?;
-        Ok((sql, c.params))
     }
 }
 
@@ -945,6 +981,41 @@ mod tests {
 
         assert!(sql.contains("SELECT id, name FROM users"));
         assert!(sql.contains("WHERE (age > 18)"));
+    }
+
+    #[test]
+    fn test_codegen_guard_allows_explicit_all() {
+        // Direct Compiler path: `delete all` / `update all` bypass the guard.
+        let mut parser = Parser::new("from users | delete all").unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        let mut c = Compiler::new(DialectKind::Sqlite);
+        assert_eq!(c.compile_pipeline(&pipeline).unwrap(), "DELETE FROM users;");
+
+        let mut parser = Parser::new("from users | update all [name = $n]").unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        let mut c = Compiler::new(DialectKind::Sqlite);
+        let sql = c.compile_pipeline(&pipeline).unwrap();
+        assert!(sql.contains("UPDATE users"));
+        assert!(sql.contains("SET name = ?"));
+        assert!(!sql.contains("WHERE"));
+    }
+
+    #[test]
+    fn test_codegen_guard_rejects_unfiltered_mutation() {
+        // Defense-in-depth: even on the direct Compiler path (which skips the
+        // analyzer), an unfiltered mutation must never produce SQL.
+        let mut parser = Parser::new("from users | delete").unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        let mut c = Compiler::new(DialectKind::Sqlite);
+        let err = c.compile_pipeline(&pipeline).unwrap_err();
+        assert!(matches!(err, CodegenError::InvalidAST(_)));
+        assert!(format!("{err}").contains("requires a preceding 'filter' stage"));
+
+        let mut parser = Parser::new("from users | update [name = $n]").unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        let mut c = Compiler::new(DialectKind::Sqlite);
+        let err = c.compile_pipeline(&pipeline).unwrap_err();
+        assert!(matches!(err, CodegenError::InvalidAST(_)));
     }
 
     #[test]

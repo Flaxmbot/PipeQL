@@ -184,9 +184,42 @@ func parseResult(res *C.PipeqlResult) *Result {
 	statementType := C.GoString(res.statement_type)
 	analysisJSON := C.GoString(res.analysis_json)
 
+	// Fast path: parse simple JSON string array ["a","b"] manually
+	// to avoid the overhead of json.Unmarshal.
 	var params []string
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		params = nil
+	if len(paramsJSON) > 2 && paramsJSON[0] == '[' && paramsJSON[len(paramsJSON)-1] == ']' {
+		inner := paramsJSON[1 : len(paramsJSON)-1]
+		if len(inner) == 0 {
+			params = []string{}
+		} else {
+			// Count commas to pre-allocate
+			n := 1
+			for i := 0; i < len(inner); i++ {
+				if inner[i] == ',' {
+					n++
+				}
+			}
+			params = make([]string, 0, n)
+			start := -1
+			for i := 0; i <= len(inner); i++ {
+				if i < len(inner) && inner[i] == '"' {
+					if start == -1 {
+						start = i + 1
+					} else {
+						params = append(params, inner[start:i])
+						start = -1
+					}
+				} else if i == len(inner) || inner[i] == ',' {
+					if start != -1 {
+						params = append(params, inner[start:i])
+						start = -1
+					}
+				}
+			}
+		}
+	} else {
+		// Fallback to json.Unmarshal for complex cases
+		_ = json.Unmarshal([]byte(paramsJSON), &params)
 	}
 
 	return &Result{

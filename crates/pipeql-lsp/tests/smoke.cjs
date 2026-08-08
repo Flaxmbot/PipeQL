@@ -241,6 +241,68 @@ function notify(method, params) {
     JSON.stringify(badmut && badmut.params.diagnostics),
   );
 
+  // Full-table escape hatches -> hint-level lint diagnostics.
+  notify("textDocument/didOpen", {
+    textDocument: {
+      uri: "file:///tmp/fulltable.pql",
+      languageId: "pipeql",
+      version: 5,
+      text: "from users | delete all",
+    },
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const ft = received
+    .filter((f) => f.method === "textDocument/publishDiagnostics")
+    .find((f) => f.params.uri.endsWith("fulltable.pql"));
+  check(
+    "flags delete all as a hint",
+    !!ft &&
+      ft.params.diagnostics.some(
+        (d) => d.severity === 4 && d.message.includes("unfiltered DELETE"),
+      ),
+    JSON.stringify(ft && ft.params.diagnostics),
+  );
+
+  notify("textDocument/didOpen", {
+    textDocument: {
+      uri: "file:///tmp/fullupdate.pql",
+      languageId: "pipeql",
+      version: 6,
+      text: "from users | update all [plan = $plan]",
+    },
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const fu = received
+    .filter((f) => f.method === "textDocument/publishDiagnostics")
+    .find((f) => f.params.uri.endsWith("fullupdate.pql"));
+  check(
+    "flags update all as a hint",
+    !!fu &&
+      fu.params.diagnostics.some(
+        (d) => d.severity === 4 && d.message.includes("unfiltered UPDATE"),
+      ),
+    JSON.stringify(fu && fu.params.diagnostics),
+  );
+
+  // A filtered delete is NOT flagged.
+  notify("textDocument/didOpen", {
+    textDocument: {
+      uri: "file:///tmp/filtereddel.pql",
+      languageId: "pipeql",
+      version: 7,
+      text: "from users | filter id == $id | delete",
+    },
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const fd = received
+    .filter((f) => f.method === "textDocument/publishDiagnostics")
+    .find((f) => f.params.uri.endsWith("filtereddel.pql"));
+  check(
+    "filtered delete is not flagged",
+    !!fd && fd.params.diagnostics.length === 0,
+    JSON.stringify(fd && fd.params.diagnostics),
+  );
+
   // Hover.
   const hover = await request("textDocument/hover", {
     textDocument: { uri: "file:///tmp/good.pql" },

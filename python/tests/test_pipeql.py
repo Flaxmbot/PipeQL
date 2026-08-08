@@ -157,6 +157,23 @@ def test_pipeql_python():
     c2 = db.compile("from notes | filter title == 'x'", {})
     assert c2["args"] == ["x"]
 
+    # UNION queries return rows (regression: dispatched as mutation, rows dropped)
+    conn.execute("CREATE TABLE active (id INT)")
+    conn.execute("CREATE TABLE archived (id INT)")
+    conn.execute("INSERT INTO active VALUES (1)")
+    conn.execute("INSERT INTO archived VALUES (2)")
+    union_rows = db.query(
+        "from active | select [id] | union from archived | select [id]"
+    )
+    assert sorted(r["id"] for r in union_rows) == [1, 2], union_rows
+
+    # Missing user param fails loudly (regression: silently bound its name)
+    try:
+        db.query("from notes | filter id == $user_id | select [id]", {"id": 42})
+        raise AssertionError("expected KeyError for missing param")
+    except KeyError as e:
+        assert "user_id" in str(e)
+
     conn.close()
 
     # asyncpg-style (async) connection

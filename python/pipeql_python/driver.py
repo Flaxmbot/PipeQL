@@ -55,11 +55,26 @@ _RETURNING_RE = re.compile(r"\bRETURNING\b", re.IGNORECASE)
 
 
 def _bind(compiled: Dict[str, Any], params: Optional[Dict[str, Any]]) -> List[Any]:
+    """Map named PipeQL params to positional driver args.
+
+    Literal-derived params (concrete type in the analysis param map, or a
+    select-mode string literal with no param-map entry) bind as themselves.
+    A user ``$param`` (type ``Any``) missing from ``params`` is a bug — fail
+    loudly instead of silently binding its name and returning wrong data.
+    """
+    analysis = compiled.get("analysis") or {}
+    types = {p["name"]: p.get("ty") for p in analysis.get("param_map", [])}
     args = []
     for name in compiled["params"]:
         if params is not None and name in params:
             args.append(params[name])
+        elif types.get(name) == "Any":
+            raise KeyError(
+                f"missing value for parameter ${name} — pass it in params, "
+                f"e.g. {{ {name}: ... }}"
+            )
         else:
+            # Literal-derived param: the value is the name itself.
             args.append(name)
     return args
 
@@ -163,20 +178,37 @@ class PipeqlDriver:
             )
         self._cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
+    @staticmethod
+    def _source_of(source: Any) -> str:
+        """Resolve a builder object (duck-typed) or a raw source string."""
+        if isinstance(source, str):
+            return source
+        if hasattr(source, "source") and callable(source.source):
+            return source.source()
+        if hasattr(source, "source"):
+            return source.source
+        raise TypeError(
+            "source must be a PipeQL string or a builder object with .source()"
+        )
+
     def _prepare(
         self,
-        source: str,
+        source: Any,
         params: Optional[Dict[str, Any]],
         whole_object_as_data: bool = False,
     ) -> Tuple[str, Dict[str, Any]]:
-        """Resolve ``$data`` object expansion into explicit assignments."""
-        if not _DATA_RE.search(source):
-            return source, dict(params or {})
-        data = params.get("data") if isinstance(params, dict) else None
-        if whole_object_as_data and not isinstance(data, dict):
-            data = params
-        expanded, values = _expand_data(source, data)
+        """Resolve builders + ``$data`` object expansion into a source string."""
+        builder_values = getattr(source, "values", None)
+        source = self._source_of(source)
         merged = dict(params or {})
+        if isinstance(builder_values, dict):
+            merged.update(builder_values)
+        if not _DATA_RE.search(source):
+            return source, merged
+        data = merged.get("data") if isinstance(merged, dict) else None
+        if whole_object_as_data and not isinstance(data, dict):
+            data = merged
+        expanded, values = _expand_data(source, data)
         merged.update(values)
         return expanded, merged
 
@@ -199,7 +231,9 @@ class PipeqlDriver:
         return {**compiled, "args": _bind(compiled, p)}
 
     def _run_sync(self, compiled: Dict[str, Any], args: List[Any]) -> Dict[str, Any]:
-        is_select = compiled["statement_type"] == "select"
+        # select AND union return rows; mutations and DDL go through execute.
+        # Keying off `statement_type == "select"` dropped rows from unions.
+        is_select = compiled["statement_type"] in ("select", "union")
         cursor = self._conn.cursor()
         try:
             cursor.execute(compiled["sql"], args)
@@ -229,7 +263,8 @@ class PipeqlDriver:
                 pass
 
     async def _run_async(self, compiled: Dict[str, Any], args: List[Any]) -> Dict[str, Any]:
-        is_select = compiled["statement_type"] == "select"
+        # select AND union are read-only — both must return rows.
+        is_select = compiled["statement_type"] in ("select", "union")
         if is_select:
             rows = await self._conn.fetch(compiled["sql"], *args)
             return {"rows": rows}
@@ -243,7 +278,7 @@ class PipeqlDriver:
         src, p = self._prepare(source, params)
         compiled = self._compile(src)
         raw = self._run_sync(compiled, _bind(compiled, p))
-        if compiled["statement_type"] == "select":
+        if compiled["statement_type"] in ("select", "union"):
             return raw["rows"]
         return {"last_id": raw["last_id"], "changes": raw["changes"], "rows": []}
 
@@ -254,7 +289,7 @@ class PipeqlDriver:
         src, p = self._prepare(source, params)
         compiled = self._compile(src)
         raw = self._run_sync(compiled, _bind(compiled, p))
-        if compiled["statement_type"] == "select":
+        if compiled["statement_type"] in ("select", "union"):
             return {"rows": raw["rows"]}
         return {"last_id": raw["last_id"], "changes": raw["changes"], "rows": []}
 

@@ -166,7 +166,7 @@ pub fn compile_with_catalog(
                 .analyze(pipeline, catalog)
                 .map_err(PipeQLError::Analysis)?;
             let (sql, params) = d
-                .compile_with_catalog(pipeline, catalog)
+                .compile_only(pipeline)
                 .map_err(PipeQLError::Codegen)?;
             (sql, params, analysis)
         }
@@ -178,7 +178,7 @@ pub fn compile_with_catalog(
                 .analyze_statement(&stmt, catalog)
                 .map_err(PipeQLError::Analysis)?;
             let (sql, params) = d
-                .compile_statement_with_catalog(&stmt, catalog)
+                .compile_statement_only(&stmt)
                 .map_err(PipeQLError::Codegen)?;
             (sql, params, analysis)
         }
@@ -207,8 +207,8 @@ pub fn parse_statement(source: &str) -> Result<crate::ast::Statement, PipeQLErro
 }
 
 /// The list of supported target dialect names.
-pub fn supported_dialects() -> Vec<&'static str> {
-    vec!["postgres", "sqlite", "duckdb", "mysql"]
+pub fn supported_dialects() -> &'static [&'static str] {
+    &["postgres", "sqlite", "duckdb", "mysql"]
 }
 
 #[cfg(test)]
@@ -236,6 +236,56 @@ mod tests {
             err,
             PipeQLError::Codegen(CodegenError::UnsupportedDialect(_))
         ));
+    }
+
+    #[test]
+    fn test_unfiltered_update_rejected() {
+        // Documented safety rule: `update` requires a preceding `filter` step.
+        let err = compile("from users | update [name = $name]", "postgres").unwrap_err();
+        assert!(matches!(err, PipeQLError::Analysis(_)));
+        assert!(format!("{err}").contains("requires a preceding 'filter' stage"));
+    }
+
+    #[test]
+    fn test_unfiltered_delete_rejected() {
+        let err = compile("from users | delete", "sqlite").unwrap_err();
+        assert!(matches!(err, PipeQLError::Analysis(_)));
+        assert!(format!("{err}").contains("requires a preceding 'filter' stage"));
+    }
+
+    #[test]
+    fn test_update_delete_all_escape_hatch() {
+        // `delete all` / `update all [...]` compile to full-table SQL with no
+        // WHERE clause — the explicit opt-in bypasses the filter guard.
+        for dialect in &["postgres", "sqlite", "duckdb", "mysql"] {
+            let r = compile("from users | delete all", dialect).unwrap();
+            assert!(r.sql.contains("DELETE FROM users"));
+            assert!(!r.sql.contains("WHERE"), "{} must have no WHERE", r.sql);
+            assert_eq!(r.statement_type, StatementType::Delete);
+
+            let r = compile("from users | update all [name = $name]", dialect).unwrap();
+            assert!(r.sql.contains("UPDATE users"));
+            assert!(r.sql.contains("SET name ="));
+            assert!(!r.sql.contains("WHERE"), "{} must have no WHERE", r.sql);
+            assert_eq!(r.statement_type, StatementType::Update);
+
+            // `all` with a filter still emits the WHERE clause.
+            let r = compile("from users | filter id == $id | delete all", dialect).unwrap();
+            assert!(r.sql.contains("WHERE"));
+        }
+    }
+
+    #[test]
+    fn test_filtered_update_delete_compile_all_dialects() {
+        for dialect in &["postgres", "sqlite", "duckdb", "mysql"] {
+            let r =
+                compile("from users | filter id == $id | update [name = $name]", dialect).unwrap();
+            assert!(r.sql.contains("UPDATE users"));
+            assert!(r.sql.contains("WHERE"));
+            let r = compile("from users | filter id == $id | delete", dialect).unwrap();
+            assert!(r.sql.contains("DELETE FROM users"));
+            assert!(r.sql.contains("WHERE"));
+        }
     }
 
     #[test]
@@ -338,7 +388,8 @@ mod tests {
         assert!(result
             .sql
             .contains("INSERT INTO users (name, email) VALUES (?, ?)"));
-        assert!(result.sql.contains("ON DUPLICATE KEY UPDATE name = ?"));
+        // MySQL ON DUPLICATE KEY UPDATE uses VALUES(col) syntax
+        assert!(result.sql.contains("ON DUPLICATE KEY UPDATE name = VALUES(name)"));
         assert!(!result.sql.contains("ON CONFLICT"));
     }
 
@@ -635,6 +686,51 @@ mod tests {
     }
 
     #[test]
+    fn test_multiline_in_subquery() {
+        // The docs-web Subquery sample — newlines inside the `in (...)` group
+        // (including after the `(`) must not confuse subquery detection.
+        let source = "from orders\n| filter customer_id in (\n  from customers\n  | filter region == 'EU'\n  | select [id]\n)";
+        for dialect in &["postgres", "sqlite", "duckdb", "mysql"] {
+            let result = compile(source, dialect).unwrap();
+            let placeholder = if *dialect == "postgres" { "$1" } else { "?" };
+            assert!(
+                result.sql.contains("IN (SELECT id FROM customers"),
+                "dialect {dialect}: {}",
+                result.sql
+            );
+            assert!(result.sql.contains(&format!("WHERE (region = {placeholder})")));
+            assert_eq!(result.params, vec!["EU"]);
+        }
+    }
+
+    #[test]
+    fn test_multiline_in_newline_before_paren() {
+        // A newline between `in` and `(` is tolerated too.
+        let source =
+            "from orders\n| filter customer_id in\n(from customers | select [id])";
+        let result = compile(source, "postgres").unwrap();
+        assert!(result.sql.contains("IN (SELECT id FROM customers)"));
+    }
+
+    #[test]
+    fn test_multiline_not_in_subquery() {
+        let source =
+            "from orders\n| filter customer_id not in (\n  from banned\n  | select [id]\n)";
+        let result = compile(source, "postgres").unwrap();
+        assert!(result.sql.contains("NOT IN (SELECT id FROM banned)"));
+    }
+
+    #[test]
+    fn test_multiline_literal_list_in_parens() {
+        // `in (` + newline + literal list must still parse as a list, not a
+        // subquery.
+        let source = "from orders\n| filter customer_id in (\n  1, 2, 3\n)";
+        let result = compile(source, "sqlite").unwrap();
+        assert!(result.sql.contains("(customer_id IN (1, 2, 3))"));
+        assert!(result.params.is_empty());
+    }
+
+    #[test]
     fn test_not_in_subquery() {
         let result = compile(
             "from orders | filter customer_id not in (from banned | select [id])",
@@ -680,6 +776,41 @@ mod tests {
         .unwrap();
         // SQLite doesn't dedup — $r appears twice
         assert_eq!(result.params, vec!["r", "r"]);
+    }
+
+    #[test]
+    fn test_subquery_placeholder_collision_postgres() {
+        // Regression: sub-compiler assigned its own $1, $2 but never rewrote them
+        // to outer numbering when both inner and outer have distinct params.
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == $region | select [id]) | filter status == $status",
+            "postgres",
+        )
+        .unwrap();
+        // Inner subquery params must be remapped to outer numbering.
+        // $region and $status are distinct → outer assigns $1 = region, $2 = status
+        // The subquery WHERE should use $1 (region), outer WHERE should use $2 (status).
+        assert_eq!(result.params, vec!["region", "status"]);
+        assert!(result.sql.contains("$1"), "subquery should use $1: {}", result.sql);
+        assert!(result.sql.contains("$2"), "outer filter should use $2: {}", result.sql);
+        // Verify no duplicate $1 in wrong places
+        let where_parts: Vec<&str> = result.sql.split("WHERE").collect();
+        assert_eq!(where_parts.len(), 3, "should have two WHERE clauses: {}", result.sql);
+    }
+
+    #[test]
+    fn test_subquery_multiple_inner_params_postgres() {
+        // Subquery has two distinct params, outer has one — should not collide.
+        let result = compile(
+            "from orders | filter customer_id in (from customers | filter region == $region and status == $status | select [id]) | filter total > $min_total",
+            "postgres",
+        )
+        .unwrap();
+        assert_eq!(result.params, vec!["region", "status", "min_total"]);
+        // Subquery uses $1, $2; outer uses $3
+        assert!(result.sql.contains("$1"), "region should be $1: {}", result.sql);
+        assert!(result.sql.contains("$2"), "status should be $2: {}", result.sql);
+        assert!(result.sql.contains("$3"), "min_total should be $3: {}", result.sql);
     }
 
     // === Edge cases ===

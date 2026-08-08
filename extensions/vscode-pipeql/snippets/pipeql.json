@@ -69,6 +69,43 @@
     "body": ["from ${1:table}", "| filter ${2:condition}", "| delete"],
     "description": "Delete rows matched by filters"
   },
+  "Update All (escape hatch)": {
+    "prefix": "update-all",
+    "body": [
+      "from ${1:table}",
+      "| update all [",
+      "    ${2:column} = $${3:param}",
+      "  ]"
+    ],
+    "description": "Update every row — explicit opt-in that bypasses the filter guard"
+  },
+  "Delete All (escape hatch)": {
+    "prefix": "delete-all",
+    "body": ["from ${1:table}", "| delete all"],
+    "description": "Delete every row — explicit opt-in that bypasses the filter guard"
+  },
+  "Upsert": {
+    "prefix": "upsert",
+    "body": [
+      "into ${1:table}",
+      "| upsert [",
+      "    ${2:id} = $${3:id_param},",
+      "    ${4:column} = $${5:value}",
+      "  ]",
+      "| conflict [${6:id}]",
+      "| do update [${7:column} = $${8:value}]"
+    ],
+    "description": "Insert or update on conflict (upsert)"
+  },
+  "Union": {
+    "prefix": "union",
+    "body": [
+      "${1:from} | select [${2:*}]",
+      "| union ${3:all}",
+      "${4:from} | select [${5:*}]"
+    ],
+    "description": "Combine result sets with UNION / UNION ALL"
+  },
   "Create Table": {
     "prefix": "table",
     "body": [

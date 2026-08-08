@@ -1,4 +1,4 @@
-"""PipeQL Python SDK (v1.1.5).
+"""PipeQL Python SDK (v1.1.6).
 
 Re-exports the native ``pipeql_python`` extension functions and the
 zero-boilerplate ``driver`` adapters.
@@ -26,7 +26,8 @@ except ImportError:
         version,
     )
 from pathlib import Path
-from . import driver
+from . import builder, driver
+from .builder import PipeQL, Value
 
 _prompt_path = Path(__file__).parent / "ai" / "system_prompt.md"
 if _prompt_path.exists():
@@ -40,6 +41,9 @@ __all__ = [
     "parse",
     "supported_dialects",
     "version",
+    "builder",
     "driver",
+    "PipeQL",
+    "Value",
     "SYSTEM_PROMPT",
 ]

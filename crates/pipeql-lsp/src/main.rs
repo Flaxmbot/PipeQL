@@ -5,12 +5,33 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use pipeql_core::ast::{PipelineStep, Statement};
+use pipeql_core::codegen::{get_dialect, CodegenError};
 use pipeql_core::{api, PipeQLError};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+/// Render a codegen-level failure as a diagnostic. Codegen errors carry no
+/// source span, so the diagnostic covers the whole document — the error is
+/// statement-level, and pointing at a hardcoded (0,0) would be misleading.
+fn codegen_diag(e: CodegenError, text: &str) -> Diagnostic {
+    let end = offset_to_position(text.len(), text);
+    Diagnostic {
+        range: Range::new(Position::default(), end),
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: Some(NumberOrString::String("pipeql-codegen".into())),
+        source: Some("pipeql".into()),
+        message: e.to_string(),
+        ..Default::default()
+    }
+}
+
 /// Convert a byte offset to a 0-based (line, character) position.
+///
+/// LSP positions use UTF-16 code units for `character`, so multi-byte chars
+/// (emoji, CJK, accents) must count as 2 — counting chars would make
+/// diagnostics after the first non-ASCII char land on the wrong column.
 fn offset_to_position(offset: usize, text: &str) -> Position {
     let mut line = 0usize;
     let mut col = 0usize;
@@ -22,7 +43,7 @@ fn offset_to_position(offset: usize, text: &str) -> Position {
             line += 1;
             col = 0;
         } else {
-            col += 1;
+            col += ch.len_utf16();
         }
     }
     Position::new(line as u32, col as u32)
@@ -35,10 +56,36 @@ fn to_range(span: (usize, usize), text: &str) -> Range {
     )
 }
 
-/// Build LSP diagnostics for a document by running lexer/parser/analyzer.
+/// Collect spans of explicit full-table mutations (`update all` / `delete all`)
+/// so the LSP can flag them as hint-level lint diagnostics. The bool marks
+/// delete (`true`) vs. update (`false`).
+fn collect_full_table_mutations(stmt: &Statement, out: &mut Vec<(usize, usize, bool)>) {
+    match stmt {
+        Statement::Pipeline(p) => {
+            for step in &p.steps {
+                match step {
+                    PipelineStep::Update { all: true, span, .. } => {
+                        out.push((span.start, span.end, false));
+                    }
+                    PipelineStep::Delete { all: true, span, .. } => {
+                        out.push((span.start, span.end, true));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Statement::Union(u) => {
+            collect_full_table_mutations(&u.left, out);
+            collect_full_table_mutations(&u.right, out);
+        }
+        _ => {}
+    }
+}/// Build LSP diagnostics for a document. The source is parsed exactly once;
+/// the same AST drives both compile-error reporting and the lint pass.
 fn diagnostics_for(text: &str) -> Vec<Diagnostic> {
-    match api::compile(text, "postgres") {
-        Ok(_) => Vec::new(),
+    let stmt = api::parse_statement(text);
+
+    let mut diags = match &stmt {
         Err(PipeQLError::Parse(errs)) => errs
             .iter()
             .map(|e| Diagnostic {
@@ -53,29 +100,56 @@ fn diagnostics_for(text: &str) -> Vec<Diagnostic> {
                 ..Default::default()
             })
             .collect(),
-        Err(PipeQLError::Analysis(errs)) => errs
-            .iter()
-            .map(|e| Diagnostic {
-                range: to_range((e.span.start, e.span.end), text),
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: Some(NumberOrString::String("pipeql-analysis".into())),
+        Ok(stmt) => match get_dialect("postgres") {
+            // "postgres" is always registered, but keep the arm for totality.
+            Err(e) => vec![codegen_diag(e, text)],
+            Ok(d) => match d.compile_statement_with_catalog(stmt, None) {
+                Ok(_) => Vec::new(),
+                Err(CodegenError::Analysis(errs)) => errs
+                    .iter()
+                    .map(|e| Diagnostic {
+                        range: to_range((e.span.start, e.span.end), text),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(NumberOrString::String("pipeql-analysis".into())),
+                        source: Some("pipeql".into()),
+                        message: e.suggestion.as_ref().map_or_else(
+                            || e.message.clone(),
+                            |s| format!("{} (hint: {s})", e.message),
+                        ),
+                        ..Default::default()
+                    })
+                    .collect(),
+                Err(e) => vec![codegen_diag(e, text)],
+            },
+        },
+        Err(_) => Vec::new(),
+    };
+
+    // Hint-level lint: flag explicit full-table mutations so reviewers see
+    // them in diagnostics even though compilation succeeds.
+    if let Ok(stmt) = &stmt {
+        let mut mutations = Vec::new();
+        collect_full_table_mutations(stmt, &mut mutations);
+        for (start, end, is_delete) in mutations {
+            diags.push(Diagnostic {
+                range: to_range((start, end), text),
+                severity: Some(DiagnosticSeverity::HINT),
+                code: Some(NumberOrString::String("pipeql-full-table".into())),
                 source: Some("pipeql".into()),
-                message: e.suggestion.as_ref().map_or_else(
-                    || e.message.clone(),
-                    |s| format!("{} (hint: {s})", e.message),
-                ),
+                message: if is_delete {
+                    "`delete all` runs an unfiltered DELETE on the whole table \
+                     — confirm this is intentional"
+                        .into()
+                } else {
+                    "`update all` runs an unfiltered UPDATE on every row \
+                     — confirm this is intentional"
+                        .into()
+                },
                 ..Default::default()
-            })
-            .collect(),
-        Err(PipeQLError::Codegen(e)) => vec![Diagnostic {
-            range: Range::new(Position::default(), Position::default()),
-            severity: Some(DiagnosticSeverity::ERROR),
-            code: Some(NumberOrString::String("pipeql-codegen".into())),
-            source: Some("pipeql".into()),
-            message: e.to_string(),
-            ..Default::default()
-        }],
+            });
+        }
     }
+    diags
 }
 
 struct Backend {

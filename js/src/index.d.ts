@@ -27,7 +27,7 @@ export interface CompileResult {
     params: string[];
     /** Statement kind, so you can dispatch `.all()` vs `.run()` without parsing SQL. */
     statementType: StatementType;
-    /** True for mutations (insert/update/delete/upsert). */
+    /** True for mutations (insert/update/delete). */
     isMutation: boolean;
     /** Full semantic analysis (param map, types, occurrences). */
     analysis: Analysis;

@@ -77,7 +77,7 @@ cargo install pipeql-cli          # CLI tool
 ```toml
 # Cargo.toml
 [dependencies]
-pipeql-core = "1.1.5"
+pipeql-core = "1.1.6"
 ```
 
 ### JavaScript / TypeScript
@@ -112,7 +112,7 @@ sudo cp target/release/libpipeql_cffi.dylib /usr/local/lib/
 go get github.com/Flaxmbot/PipeQL/go@latest
 
 #    Or pin a specific release:
-#    go get github.com/Flaxmbot/PipeQL/go@v1.1.5
+#    go get github.com/Flaxmbot/PipeQL/go@v1.1.6
 ```
 
 > If you see `go.mod file not found` you are outside a Go module — run `go mod init <yourmodule>` first, or run the `go get` from a project that already has a `go.mod`.
@@ -173,7 +173,9 @@ All PipeQL reserved keywords:
 | `skip` | Offset rows | `skip 50` |
 | `insert` | Insert values | `insert [name = $name]` |
 | `update` | Update values (requires filter) | `update [name = $name]` |
+| `update all` | Update every row (explicit opt-in) | `update all [plan = 'free']` |
 | `delete` | Delete rows (requires filter) | `delete` |
+| `delete all` | Delete every row (explicit opt-in) | `delete all` |
 | `upsert` | Insert-or-update values | `upsert [id = $id, name = $n]` |
 | `conflict` | Conflict target columns for upsert | `conflict [id]` |
 | `do` | Conflict action for upsert | `do update [name = $n]` |
@@ -269,6 +271,16 @@ from users | filter id == $id | update [name = $name, email = $email]
 → `UPDATE users SET name = $1, email = $2 WHERE (id = $3);`
 
 > ⚠️ `update` **requires** a preceding `filter` stage — PipeQL enforces this to prevent accidental mass updates.
+>
+> 🔓 **Escape hatch:** to deliberately update every row, write `update all [...]` explicitly:
+>
+> ```pipeql
+> from users | update all [plan = 'free']
+> ```
+>
+> → `UPDATE users SET plan = $1;` (no `WHERE`)
+>
+> If a `filter` is present alongside `all`, the `WHERE` clause still applies.
 
 #### Delete
 
@@ -279,6 +291,16 @@ from users | filter id == $id | delete
 → `DELETE FROM users WHERE (id = $1);`
 
 > ⚠️ `delete` **requires** a preceding `filter` stage — same safety enforcement as `update`.
+>
+> 🔓 **Escape hatch:** to deliberately clear a table, write `delete all` explicitly:
+>
+> ```pipeql
+> from users | delete all
+> ```
+>
+> → `DELETE FROM users;` (no `WHERE`)
+>
+> If a `filter` is present alongside `all`, the `WHERE` clause still applies.
 
 #### Upsert (Insert or Update on Conflict)
 
@@ -320,17 +342,31 @@ from orders
 
 ```pipeql
 table users [
-  id integer primary_key auto_increment,
-  name string not_null,
-  email string not_null unique,
+  id int primary auto,
+  name string not null,
+  email string not null unique,
   active bool default true,
   created_at timestamp default '2024-01-01'
 ]
 ```
 
-| Type | Column Modifiers |
-|:---|:---|
-| `integer`, `float`, `string`, `bool`, `timestamp` | `primary_key`, `auto_increment`, `not_null`, `unique`, `default <value>` |
+| Type | Aliases | Column Modifiers |
+|:---|:---|:---|
+| `int` | `integer` | `primary`, `auto`, `unique`, `not null`, `default <value>` |
+| `float` | `real` | `primary`, `auto`, `unique`, `not null`, `default <value>` |
+| `string` | `text` | `primary`, `auto`, `unique`, `not null`, `default <value>` |
+| `bool` | `boolean` | `primary`, `auto`, `unique`, `not null`, `default <value>` |
+| `timestamp` | `datetime` | `primary`, `auto`, `unique`, `not null`, `default <value>` |
+
+#### Type Mapping Across Dialects
+
+| PipeQL Type | PostgreSQL | SQLite | DuckDB | MySQL |
+|:---|:---|:---|:---|:---|
+| `int` / `integer` | `INTEGER` | `INTEGER` | `INTEGER` | `INT` |
+| `float` / `real` | `DOUBLE PRECISION` | `REAL` | `DOUBLE` | `DOUBLE` |
+| `string` / `text` | `TEXT` | `TEXT` | `VARCHAR` | `VARCHAR(255)` |
+| `bool` / `boolean` | `BOOLEAN` | `INTEGER` | `BOOLEAN` | `BOOLEAN` |
+| `timestamp` / `datetime` | `TIMESTAMP` | `DATETIME` | `TIMESTAMP` | `TIMESTAMP` |
 
 ### Comments
 
@@ -441,8 +477,87 @@ pipeql compile "from users | take 10" --dialect postgres
 pipeql compile "from users | filter id == $id" --dialect sqlite
 pipeql parse "from users | select [id, name]"
 pipeql dialects
-pipeql version
+pipeql --version
 ```
+
+### Optional: Fluent builder (programmatic composition)
+
+The **string DSL above is PipeQL's primary interface.** For composing queries in
+code — conditional or looped pipeline stages, or object-style inserts — every
+SDK additionally ships an **optional fluent builder**. A builder query and a
+hand-written string query are *provably identical*: builders assemble the exact
+same source string and hand it to the same compiler. Object inserts accept
+key → value objects and auto-generate `$b0, $b1, ...` bind parameters.
+
+```rust
+// Rust — pipeql_core::builder
+use pipeql_core::builder::{Query, Value};
+
+let q = Query::from("notes")
+    .filter("is_archived == 0")
+    .sort(["created_at desc"])
+    .take(10);
+let compiled = q.compile("postgres").unwrap();
+
+let ins = Query::into_("notes").insert([("title", Value::Str("Hi".into()))]);
+// source: "into notes | insert [title = $b0]"  values: [("title", "Hi")]
+```
+
+```javascript
+// JavaScript — @flaxmbot/pipeql/builder (also works through a driver: db.query(q))
+import { PipeQL } from '@flaxmbot/pipeql/builder';
+
+const q = PipeQL.from('notes')
+  .filter('is_archived == 0')
+  .sort(['created_at desc'])
+  .take(10);
+const { sql, params } = await q.compile('sqlite');
+
+const ins = PipeQL.into('notes').insert({ title: 'Hi', flag: 1 });
+// source: "into notes | insert [title = $b0, flag = $b1]"  values: { b0: 'Hi', b1: 1 }
+```
+
+```python
+# Python — pipeql_python.builder (also works through a driver: db.query(q))
+from pipeql_python.builder import PipeQL
+
+q = (PipeQL.from_("notes")
+     .filter("is_archived == 0")
+     .sort(["created_at desc"])
+     .take(10))
+result = q.compile("postgres")
+rows = db.query(q)
+
+ins = PipeQL.into_("notes").insert({"title": "Hi", "flag": 1})
+# source: "into notes | insert [title = $b0, flag = $b1]"  values: {"b0": "Hi", "b1": 1}
+```
+
+```go
+// Go — pipeql (maps are sorted for deterministic SQL; PairsOf keeps exact order)
+q := pipeql.From("notes").
+    Filter("is_archived == 0").
+    Sort([]string{"created_at desc"}).
+    Take(10)
+res, err := q.Compile("postgres")
+
+ins := pipeql.Into("notes").Insert(pipeql.PairsOf("title", "Hi", "flag", 1))
+```
+
+```c
+// C — libpipeql (every stage returns the handle for chaining)
+PipeqlQuery* q = pipeql_query_from("notes");
+q = pipeql_query_filter(q, "is_archived == 0");
+q = pipeql_query_sort(q, "created_at desc");
+q = pipeql_query_take(q, 10);
+PipeqlResult* built = pipeql_query_compile(q, "postgres", &err);
+printf("SQL: %s\n", built->sql);
+pipeql_result_free(built);
+pipeql_query_free(q);
+```
+
+**When to use the builder:** conditional or looped pipeline stages, object-style
+inserts, and passing a query object straight into a driver. For one-shot
+queries, the string DSL is shorter and equally safe.
 
 ---
 
@@ -499,8 +614,7 @@ Error at line 1, col 1: Unknown keyword 'selct'
   hint: Did you mean 'select'?
 
 Error at line 1, col 35: 'update' requires a preceding 'filter' stage
-  hint: Add a filter to prevent accidental mass updates.
-  help: from users | filter id == $id | update [...]
+  hint: Add a filter to prevent accidental mass updates: from <table> | filter ... | update [...] (or write `update all [...]` to explicitly opt in)
 
 Error at line 1, col 15: Unclosed string literal
   hint: Add a closing single quote (') to terminate the string.

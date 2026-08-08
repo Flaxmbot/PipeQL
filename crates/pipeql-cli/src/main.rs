@@ -36,7 +36,7 @@ struct CompileArgs {
     /// Emit machine-readable JSON.
     #[arg(long)]
     json: bool,
-    /// Show extracted parameter names on stderr (default when not --json).
+    /// Suppress printing extracted parameter names to stderr (default when not --json).
     #[arg(long)]
     no_params: bool,
 }
@@ -133,7 +133,7 @@ fn run_parse(args: ParseArgs) {
 
 fn run_supported_dialects() {
     let dialects = pipeql_core::api::supported_dialects();
-    for d in &dialects {
+    for d in dialects {
         println!("{d}");
     }
 }

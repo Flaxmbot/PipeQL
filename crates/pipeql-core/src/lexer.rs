@@ -118,8 +118,18 @@ impl fmt::Display for TokenKind {
             TokenKind::Union => write!(f, "union"),
             TokenKind::All => write!(f, "all"),
             TokenKind::Integer(v) => write!(f, "{v}"),
-            TokenKind::Float(v) => write!(f, "{v}"),
-            TokenKind::String(v) => write!(f, "'{v}'"),
+            TokenKind::Float(v) => {
+                let s = format!("{v}");
+                if s.contains('e') || s.contains('E') {
+                    write!(f, "{v:.15}")
+                } else {
+                    write!(f, "{v}")
+                }
+            }
+            TokenKind::String(v) => {
+                let escaped = v.replace('\'', "''");
+                write!(f, "'{escaped}'")
+            }
             TokenKind::Ident(v) => write!(f, "{v}"),
             TokenKind::Param(v) => write!(f, "${v}"),
             TokenKind::ParamBraced(v) => write!(f, "${{{v}}}"),
@@ -254,17 +264,20 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self, _start: usize, first: char) -> TokenKind {
-        let mut s = String::new();
-        s.push(first);
+        // Accumulate the digit string first, then parse it exactly once. This
+        // avoids the previous overflow path, which corrupted big integers
+        // (e.g. a 20-digit literal parsed as ~1/100th of its value).
+        let mut digits = String::new();
+        digits.push(first);
         let mut is_float = false;
 
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
-                s.push(ch);
+                digits.push(ch);
                 self.advance();
             } else if ch == '.' && !is_float {
                 is_float = true;
-                s.push(ch);
+                digits.push('.');
                 self.advance();
             } else {
                 break;
@@ -272,9 +285,13 @@ impl<'a> Lexer<'a> {
         }
 
         if is_float {
-            TokenKind::Float(s.parse().unwrap_or(0.0))
+            TokenKind::Float(digits.parse().unwrap_or(0.0))
+        } else if let Ok(v) = digits.parse::<i64>() {
+            TokenKind::Integer(v)
         } else {
-            TokenKind::Integer(s.parse().unwrap_or(0))
+            // Integer overflow — fall back to float rather than corrupting the
+            // value (matches the previous intent, minus the bug).
+            TokenKind::Float(digits.parse().unwrap_or(0.0))
         }
     }
 
@@ -293,44 +310,42 @@ impl<'a> Lexer<'a> {
     }
 
     fn keyword_or_ident(s: &str) -> TokenKind {
-        match s.to_lowercase().as_str() {
-            "from" => TokenKind::From,
-            "filter" => TokenKind::Filter,
-            "select" => TokenKind::Select,
-            "derive" => TokenKind::Derive,
-            "join" => TokenKind::Join,
-            "group" => TokenKind::Group,
-            "sort" => TokenKind::Sort,
-            "take" => TokenKind::Take,
-            "skip" => TokenKind::Skip,
-            "into" => TokenKind::Into,
-            "insert" => TokenKind::Insert,
-            "update" => TokenKind::Update,
-            "delete" => TokenKind::Delete,
-            "table" => TokenKind::Table,
-            "as" => TokenKind::As,
-            "on" => TokenKind::On,
-            "and" => TokenKind::And,
-            "or" => TokenKind::Or,
-            "not" => TokenKind::Not,
-            "in" => TokenKind::In,
-            "is" => TokenKind::Is,
-            "null" => TokenKind::Null,
-            "true" => TokenKind::True,
-            "false" => TokenKind::False,
-            "left" => TokenKind::Left,
-            "right" => TokenKind::Right,
-            "full" => TokenKind::Full,
-            "inner" => TokenKind::Inner,
-            "asc" => TokenKind::Asc,
-            "desc" => TokenKind::Desc,
-            "upsert" => TokenKind::Upsert,
-            "conflict" => TokenKind::Conflict,
-            "do" => TokenKind::Do,
-            "union" => TokenKind::Union,
-            "all" => TokenKind::All,
-            _ => TokenKind::Ident(s.to_string()),
-        }
+        if s.eq_ignore_ascii_case("from") { return TokenKind::From; }
+        if s.eq_ignore_ascii_case("filter") { return TokenKind::Filter; }
+        if s.eq_ignore_ascii_case("select") { return TokenKind::Select; }
+        if s.eq_ignore_ascii_case("derive") { return TokenKind::Derive; }
+        if s.eq_ignore_ascii_case("join") { return TokenKind::Join; }
+        if s.eq_ignore_ascii_case("group") { return TokenKind::Group; }
+        if s.eq_ignore_ascii_case("sort") { return TokenKind::Sort; }
+        if s.eq_ignore_ascii_case("take") { return TokenKind::Take; }
+        if s.eq_ignore_ascii_case("skip") { return TokenKind::Skip; }
+        if s.eq_ignore_ascii_case("into") { return TokenKind::Into; }
+        if s.eq_ignore_ascii_case("insert") { return TokenKind::Insert; }
+        if s.eq_ignore_ascii_case("update") { return TokenKind::Update; }
+        if s.eq_ignore_ascii_case("delete") { return TokenKind::Delete; }
+        if s.eq_ignore_ascii_case("table") { return TokenKind::Table; }
+        if s.eq_ignore_ascii_case("as") { return TokenKind::As; }
+        if s.eq_ignore_ascii_case("on") { return TokenKind::On; }
+        if s.eq_ignore_ascii_case("and") { return TokenKind::And; }
+        if s.eq_ignore_ascii_case("or") { return TokenKind::Or; }
+        if s.eq_ignore_ascii_case("not") { return TokenKind::Not; }
+        if s.eq_ignore_ascii_case("in") { return TokenKind::In; }
+        if s.eq_ignore_ascii_case("is") { return TokenKind::Is; }
+        if s.eq_ignore_ascii_case("null") { return TokenKind::Null; }
+        if s.eq_ignore_ascii_case("true") { return TokenKind::True; }
+        if s.eq_ignore_ascii_case("false") { return TokenKind::False; }
+        if s.eq_ignore_ascii_case("left") { return TokenKind::Left; }
+        if s.eq_ignore_ascii_case("right") { return TokenKind::Right; }
+        if s.eq_ignore_ascii_case("full") { return TokenKind::Full; }
+        if s.eq_ignore_ascii_case("inner") { return TokenKind::Inner; }
+        if s.eq_ignore_ascii_case("asc") { return TokenKind::Asc; }
+        if s.eq_ignore_ascii_case("desc") { return TokenKind::Desc; }
+        if s.eq_ignore_ascii_case("upsert") { return TokenKind::Upsert; }
+        if s.eq_ignore_ascii_case("conflict") { return TokenKind::Conflict; }
+        if s.eq_ignore_ascii_case("do") { return TokenKind::Do; }
+        if s.eq_ignore_ascii_case("union") { return TokenKind::Union; }
+        if s.eq_ignore_ascii_case("all") { return TokenKind::All; }
+        TokenKind::Ident(s.to_string())
     }
 
     fn read_param(&mut self, start: usize) -> Result<TokenKind, LexerError> {
@@ -656,6 +671,32 @@ mod tests {
         let mut lexer = Lexer::new("from t | filter x == 3.25");
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[6].kind, TokenKind::Float(3.25));
+    }
+
+    #[test]
+    fn test_big_integer_literal_keeps_its_value() {
+        // Regression: 20+ digit integers used to corrupt their value when
+        // overflowing i64 (the overflow fallback divided by 10^extra digits).
+        // i64::MAX is 9223372036854775807; a 20-digit literal must still
+        // carry the full magnitude (as a float fallback, not ~1/100th).
+        let mut lexer = Lexer::new("from t | filter x == 99999999999999999999");
+        let tokens = lexer.tokenize().unwrap();
+        match &tokens[6].kind {
+            TokenKind::Float(v) => {
+                assert!(
+                    (*v / 1e20 - 1.0).abs() < 1e-10,
+                    "20-digit literal parsed as {v}, expected ~1e20"
+                );
+            }
+            other => panic!("expected Float fallback for big literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_huge_integer_within_i64_stays_integer() {
+        let mut lexer = Lexer::new("from t | filter x == 9223372036854775807");
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[6].kind, TokenKind::Integer(9223372036854775807));
     }
 
     #[test]

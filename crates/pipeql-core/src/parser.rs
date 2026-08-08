@@ -29,26 +29,30 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 fn levenshtein_distance(a: &str, b: &str) -> usize {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let mut matrix = vec![vec![0; b_chars.len() + 1]; a_chars.len() + 1];
+    let a_len = a.len();
+    let b_len = b.len();
+    if a_len == 0 { return b_len; }
+    if b_len == 0 { return a_len; }
 
-    for i in 0..=a_chars.len() {
-        matrix[i][0] = i;
-    }
-    for j in 0..=b_chars.len() {
-        matrix[0][j] = j;
+    // Rolling buffer: only keep two rows at a time
+    let mut prev = vec![0usize; b_len + 1];
+    let mut curr = vec![0usize; b_len + 1];
+
+    for (j, slot) in prev.iter_mut().enumerate().take(b_len + 1) {
+        *slot = j;
     }
 
-    for i in 1..=a_chars.len() {
-        for j in 1..=b_chars.len() {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
-            matrix[i][j] = (matrix[i - 1][j] + 1)
-                .min(matrix[i][j - 1] + 1)
-                .min(matrix[i - 1][j - 1] + cost);
+    for (i, a_ch) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, b_ch) in b.chars().enumerate() {
+            let cost = if a_ch == b_ch { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
         }
+        std::mem::swap(&mut prev, &mut curr);
     }
-    matrix[a_chars.len()][b_chars.len()]
+    prev[b_len]
 }
 
 pub fn suggest_keyword(input: &str) -> Option<&'static str> {
@@ -58,19 +62,24 @@ pub fn suggest_keyword(input: &str) -> Option<&'static str> {
         "conflict", "do", "union", "all", "left", "right", "full", "inner", "as", "on",
         "and", "or", "not", "in", "is", "null", "true", "false", "asc", "desc",
     ];
-    let lower = input.to_lowercase();
     let mut best: Option<(&'static str, usize)> = None;
 
     for &cand in &candidates {
-        let dist = levenshtein_distance(&lower, cand);
+        // Case-insensitive Levenshtein: compare against lowercased candidate
+        let dist = if input.len() <= 16 && cand.len() <= 16 {
+            // Short strings: direct case-insensitive char comparison
+            levenshtein_distance_ci(input, cand)
+        } else {
+            levenshtein_distance(&input.to_lowercase(), cand)
+        };
         if dist <= 2 && dist < cand.len() {
             if let Some((best_cand, best_dist)) = best {
                 if dist < best_dist {
                     best = Some((cand, dist));
                 } else if dist == best_dist {
                     // Tie breaker: prefer candidate sharing the same starting character
-                    if cand.chars().next() == lower.chars().next()
-                        && best_cand.chars().next() != lower.chars().next()
+                    if cand.bytes().next().eq(&input.bytes().next().map(|b| b.to_ascii_lowercase()))
+                        && best_cand.bytes().next() != input.bytes().next().map(|b| b.to_ascii_lowercase())
                     {
                         best = Some((cand, dist));
                     }
@@ -81,6 +90,33 @@ pub fn suggest_keyword(input: &str) -> Option<&'static str> {
         }
     }
     best.map(|(c, _)| c)
+}
+
+/// Case-insensitive Levenshtein for short strings (avoids allocation).
+fn levenshtein_distance_ci(a: &str, b: &str) -> usize {
+    let b_len = b.len();
+    if a.is_empty() { return b_len; }
+    if b_len == 0 { return a.len(); }
+
+    let mut prev = vec![0usize; b_len + 1];
+    let mut curr = vec![0usize; b_len + 1];
+
+    for (j, slot) in prev.iter_mut().enumerate().take(b_len + 1) {
+        *slot = j;
+    }
+
+    for (i, a_ch) in a.bytes().enumerate() {
+        curr[0] = i + 1;
+        let a_lower = a_ch.to_ascii_lowercase();
+        for (j, b_ch) in b.bytes().enumerate() {
+            let cost = if a_lower == b_ch.to_ascii_lowercase() { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_len]
 }
 
 pub struct Parser {
@@ -215,6 +251,21 @@ impl Parser {
 
     fn is_pipe_separator(&self) -> bool {
         matches!(self.peek(), TokenKind::Pipe | TokenKind::Newline)
+    }
+
+    /// Peek `offset` tokens ahead, skipping any intervening newline tokens, and
+    /// return the first non-newline token kind. Used for lookaheads that must
+    /// tolerate line breaks, e.g. `in (\n from ...)` subqueries.
+    fn peek_past_newlines(&self, offset: usize) -> Option<&TokenKind> {
+        let mut i = self.pos + offset;
+        while let Some(t) = self.tokens.get(i) {
+            if matches!(t.kind, TokenKind::Newline) {
+                i += 1;
+            } else {
+                return Some(&t.kind);
+            }
+        }
+        None
     }
 
     fn parse_pipe_op(&mut self) -> Result<(), ParseError> {
@@ -407,6 +458,13 @@ impl Parser {
         self.expect(&TokenKind::Insert).map_err(|e| vec![e])?;
         self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
         let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
+        if assignments.is_empty() {
+            return Err(vec![ParseError {
+                message: "insert requires at least one column assignment".to_string(),
+                span: self.peek_token().span,
+                suggestion: None,
+            }]);
+        }
         self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
 
         self.skip_newlines();
@@ -522,20 +580,20 @@ impl Parser {
                     self.expect(&TokenKind::Null)?;
                     modifiers.push(ColumnModifier::NotNull);
                 }
-                TokenKind::Ident(name) => match name.to_lowercase().as_str() {
-                    "primary" => {
+                TokenKind::Ident(name) => match name.as_str() {
+                    s if s.eq_ignore_ascii_case("primary") => {
                         self.advance();
                         modifiers.push(ColumnModifier::PrimaryKey);
                     }
-                    "auto" => {
+                    s if s.eq_ignore_ascii_case("auto") => {
                         self.advance();
                         modifiers.push(ColumnModifier::AutoIncrement);
                     }
-                    "unique" => {
+                    s if s.eq_ignore_ascii_case("unique") => {
                         self.advance();
                         modifiers.push(ColumnModifier::Unique);
                     }
-                    "default" => {
+                    s if s.eq_ignore_ascii_case("default") => {
                         self.advance();
                         let expr = self.parse_expr()?;
                         modifiers.push(ColumnModifier::Default(expr));
@@ -556,12 +614,12 @@ impl Parser {
     fn parse_column_type(&mut self) -> Result<ColumnType, ParseError> {
         let token = self.advance();
         match &token.kind {
-            TokenKind::Ident(name) => match name.to_lowercase().as_str() {
-                "int" | "integer" => Ok(ColumnType::Integer),
-                "float" | "real" => Ok(ColumnType::Float),
-                "string" | "text" => Ok(ColumnType::String),
-                "bool" | "boolean" => Ok(ColumnType::Bool),
-                "timestamp" | "datetime" => Ok(ColumnType::Timestamp),
+            TokenKind::Ident(name) => match name.as_str() {
+                s if s.eq_ignore_ascii_case("int") || s.eq_ignore_ascii_case("integer") => Ok(ColumnType::Integer),
+                s if s.eq_ignore_ascii_case("float") || s.eq_ignore_ascii_case("real") => Ok(ColumnType::Float),
+                s if s.eq_ignore_ascii_case("string") || s.eq_ignore_ascii_case("text") => Ok(ColumnType::String),
+                s if s.eq_ignore_ascii_case("bool") || s.eq_ignore_ascii_case("boolean") => Ok(ColumnType::Bool),
+                s if s.eq_ignore_ascii_case("timestamp") || s.eq_ignore_ascii_case("datetime") => Ok(ColumnType::Timestamp),
                 other => {
                     let hint = if let Some(suggested) = suggest_keyword(other) {
                         format!("Did you mean `{suggested}`? Supported types: int, float, string, bool, timestamp")
@@ -668,12 +726,22 @@ impl Parser {
         let token = self.advance(); // consume 'update'
         let span_start = token.span.start;
 
+        // Optional explicit `all` marker: `update all [...]` is the opt-in
+        // escape hatch for full-table updates (bypasses the filter guard).
+        let all = if matches!(self.peek(), TokenKind::All) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         self.expect(&TokenKind::LBracket).map_err(|e| vec![e])?;
         let assignments = self.parse_assignment_list().map_err(|e| vec![e])?;
         self.expect(&TokenKind::RBracket).map_err(|e| vec![e])?;
 
         Ok(PipelineStep::Update {
             assignments,
+            all,
             span: Span::new(span_start, self.peek_token().span.start),
         })
     }
@@ -681,7 +749,17 @@ impl Parser {
     fn parse_delete(&mut self) -> Result<PipelineStep, Vec<ParseError>> {
         let token = self.advance(); // consume 'delete'
 
+        // Optional explicit `all` marker: `delete all` is the opt-in escape
+        // hatch for full-table deletes (bypasses the filter guard).
+        let all = if matches!(self.peek(), TokenKind::All) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
         Ok(PipelineStep::Delete {
+            all,
             span: Span::new(token.span.start, self.peek_token().span.start),
         })
     }
@@ -769,7 +847,17 @@ impl Parser {
             TokenKind::Right => JoinType::Right,
             TokenKind::Full => JoinType::Full,
             TokenKind::Inner => JoinType::Inner,
-            _ => unreachable!("parse_join_with_prefix is only called on join-type keywords"),
+            // Defensive: only reachable if a future caller dispatches other
+            // tokens here. Produce a real error instead of panicking.
+            other => {
+                return Err(vec![ParseError {
+                    message: format!("Expected a join type keyword, found '{other}'"),
+                    span: token.span,
+                    suggestion: Some(
+                        "Supported join types: left, right, full, inner".to_string(),
+                    ),
+                }]);
+            }
         };
         self.expect(&TokenKind::Join).map_err(|e| vec![e])?;
         self.parse_join_body(join_type, token.span.start)
@@ -1098,10 +1186,7 @@ impl Parser {
             // Infix: `expr in [...]` / `expr not in [...]`
             if matches!(self.peek(), TokenKind::In)
                 || (matches!(self.peek(), TokenKind::Not)
-                    && matches!(
-                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                        Some(TokenKind::In)
-                    ))
+                    && matches!(self.peek_past_newlines(1), Some(TokenKind::In)))
             {
                 let (l_bp, _r_bp) = (7, 8);
                 if l_bp < min_bp {
@@ -1112,21 +1197,26 @@ impl Parser {
                 if negated {
                     self.advance(); // consume 'in'
                 }
+                // Tolerate a line break between `in` and its operand:
+                // `x in\n(from ...)` and `x in\n[1, 2]` both parse.
+                self.skip_newlines();
                 // A parenthesized group after `in` is either a subquery
                 // (`in (from ...)`) or a literal list (`in (1, 2, 3)`), the
                 // spelling every SQL developer expects.
                 if matches!(self.peek(), TokenKind::LParen) {
-                    // Peek ahead to see if `from` follows the `(`
-                    if matches!(
-                        self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                        Some(TokenKind::From)
-                    ) {
+                    // Peek ahead (tolerating newlines) to see if `from`
+                    // follows the `(`: `in (\n from ...)` is a subquery,
+                    // `in (\n 1, 2, 3)` is a literal list.
+                    if matches!(self.peek_past_newlines(1), Some(TokenKind::From)) {
                         self.advance(); // consume '('
                                         // Parse the inner pipeline as a subquery
                         let source = self.parse_table_source().map_err(|e| {
-                            e.into_iter().next().unwrap_or(ParseError {
+                            // parse_table_source always reports at least one
+                            // error; fall back to the current token's real
+                            // position only if that invariant ever changes.
+                            e.into_iter().next().unwrap_or_else(|| ParseError {
                                 message: "Failed to parse subquery source".to_string(),
-                                span: Span::new(0, 0),
+                                span: self.peek_token().span,
                                 suggestion: None,
                             })
                         })?;
@@ -1138,9 +1228,12 @@ impl Parser {
                                 break;
                             }
                             let step = self.parse_step().map_err(|e| {
-                                e.into_iter().next().unwrap_or(ParseError {
+                                // parse_step always reports at least one
+                                // error; fall back to the current token's real
+                                // position only if that invariant ever changes.
+                                e.into_iter().next().unwrap_or_else(|| ParseError {
                                     message: "Failed to parse subquery step".to_string(),
-                                    span: Span::new(0, 0),
+                                    span: self.peek_token().span,
                                     suggestion: None,
                                 })
                             })?;
@@ -1519,6 +1612,36 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multiline_in_subquery() {
+        // Newlines after the `(` and between subquery steps must parse.
+        let source = "from orders\n| filter customer_id in (\n  from customers\n  | filter region == 'EU'\n  | select [id]\n)\n| select [id]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        if let PipelineStep::Filter { expr, .. } = &pipeline.steps[0] {
+            match expr {
+                Expr::InSubquery { subquery, negated, .. } => {
+                    assert!(!*negated);
+                    assert_eq!(subquery.source.name.name, "customers");
+                    assert_eq!(subquery.steps.len(), 2);
+                }
+                _ => panic!("Expected InSubquery expression"),
+            }
+        } else {
+            panic!("Expected Filter step");
+        }
+    }
+
+    #[test]
+    fn test_parse_in_newline_before_paren() {
+        // A newline between `in` and `(` must also be tolerated.
+        let source =
+            "from orders\n| filter customer_id in\n(from customers | select [id])";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        assert!(matches!(&pipeline.steps[0], PipelineStep::Filter { .. }));
+    }
+
+    #[test]
     fn test_parse_not_in_list_parenthesized() {
         let source = "from t | filter id not in (1, 2)";
         let mut parser = Parser::new(source).unwrap();
@@ -1635,6 +1758,38 @@ mod tests {
         let mut parser = Parser::new(source).unwrap();
         let pipeline = parser.parse_pipeline().unwrap();
         assert!(matches!(&pipeline.steps[1], PipelineStep::Delete { .. }));
+    }
+
+    #[test]
+    fn test_parse_update_delete_all_escape_hatch() {
+        // `delete all` / `update all [...]` set the explicit `all` flag.
+        let source = "from notes | delete all";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        match &pipeline.steps[0] {
+            PipelineStep::Delete { all, .. } => assert!(*all),
+            other => panic!("Expected Delete step, got {other:?}"),
+        }
+
+        let source = "from notes | update all [title = $title]";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        match &pipeline.steps[0] {
+            PipelineStep::Update { all, assignments, .. } => {
+                assert!(*all);
+                assert_eq!(assignments.len(), 1);
+            }
+            other => panic!("Expected Update step, got {other:?}"),
+        }
+
+        // Without `all` the flag stays false.
+        let source = "from notes | delete";
+        let mut parser = Parser::new(source).unwrap();
+        let pipeline = parser.parse_pipeline().unwrap();
+        match &pipeline.steps[0] {
+            PipelineStep::Delete { all, .. } => assert!(!*all),
+            other => panic!("Expected Delete step, got {other:?}"),
+        }
     }
 
     #[test]

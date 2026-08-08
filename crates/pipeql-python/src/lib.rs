@@ -15,7 +15,7 @@
 //! ```
 #![allow(clippy::useless_conversion)]
 
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods, PyList, PyListMethods};
 
@@ -33,14 +33,17 @@ fn compile_result(
     };
     match compiled {
         Ok(compiled) => {
-            let analysis = serde_json::to_value(&compiled.analysis)
+            let analysis_json = serde_json::to_string(&compiled.analysis)
                 .map_err(|e| PyRuntimeError::new_err(format!("serialization error: {e}")))?;
             let dict = PyDict::new_bound(py);
             dict.set_item("sql", &compiled.sql)?;
             dict.set_item("params", compiled.params.clone())?;
             dict.set_item("statement_type", compiled.statement_type.as_str())?;
             dict.set_item("is_mutation", compiled.is_mutation)?;
-            dict.set_item("analysis", json_to_py(py, analysis)?)?;
+            // Use native json.loads() for analysis — faster than recursive Rust traversal
+            let json_mod = py.import_bound("json")?;
+            let analysis_obj = json_mod.call_method1("loads", (analysis_json,))?;
+            dict.set_item("analysis", analysis_obj)?;
             dict.set_item("parameter_count", compiled.params.len())?;
             Ok(dict.into_any().unbind())
         }
@@ -140,9 +143,13 @@ fn parse_catalog(d: &Bound<'_, PyDict>) -> PyResult<Catalog> {
 fn parse(source: &str) -> PyResult<PyObject> {
     match api::parse_statement(source) {
         Ok(stmt) => {
-            let json = serde_json::to_value(&stmt)
+            let json = serde_json::to_string(&stmt)
                 .map_err(|e| PyRuntimeError::new_err(format!("serialization error: {e}")))?;
-            Python::with_gil(|py| json_to_py(py, json))
+            Python::with_gil(|py| {
+                let json_mod = py.import_bound("json")?;
+                json_mod.call_method1("loads", (json,))
+                    .map(|obj| obj.unbind())
+            })
         }
         Err(PipeQLError::Parse(errs)) => {
             let message = errs
@@ -159,7 +166,7 @@ fn parse(source: &str) -> PyResult<PyObject> {
 /// The list of supported target dialects.
 #[pyfunction]
 fn supported_dialects() -> Vec<&'static str> {
-    api::supported_dialects()
+    api::supported_dialects().to_vec()
 }
 
 /// PipeQL version string.
@@ -168,43 +175,11 @@ fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Convert a serde_json::Value into a Python object.
-fn json_to_py(py: Python<'_>, value: serde_json::Value) -> PyResult<PyObject> {
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.to_object(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(i.to_object(py))
-            } else if let Some(f) = n.as_f64() {
-                Ok(f.to_object(py))
-            } else {
-                Ok(n.to_string().to_object(py))
-            }
-        }
-        serde_json::Value::String(s) => Ok(s.to_object(py)),
-        serde_json::Value::Array(items) => {
-            let list = PyList::empty_bound(py);
-            for item in items {
-                list.append(json_to_py(py, item)?)?;
-            }
-            Ok(list.into_any().unbind())
-        }
-        serde_json::Value::Object(map) => {
-            let dict = PyDict::new_bound(py);
-            for (k, v) in map {
-                dict.set_item(&k, json_to_py(py, v)?)?;
-            }
-            Ok(dict.into_any().unbind())
-        }
-    }
-}
-
 fn py_error(e: &PipeQLError) -> PyErr {
     match e {
         PipeQLError::Parse(_) => PyValueError::new_err(e.to_string()),
         PipeQLError::Analysis(_) => PyValueError::new_err(e.to_string()),
-        PipeQLError::Codegen(c) => PyTypeError::new_err(c.to_string()),
+        PipeQLError::Codegen(_) => PyRuntimeError::new_err(e.to_string()),
     }
 }
 

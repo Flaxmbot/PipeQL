@@ -11,14 +11,29 @@ export default grammar({
 
   extras: ($) => [/\s/, $.line_comment, $.block_comment],
 
-  conflicts: ($) => [[$.pipeline, $._separator]],
+  conflicts: ($) => [[$.pipeline, $._separator], [$.pipeline, $.pipeline]],
 
   rules: {
-    // A statement is a read pipeline, an insert, or a table DDL declaration.
+    // A statement is a read pipeline, an insert/upsert, a table DDL declaration,
+    // or a union of two pipelines.
     statement: ($) => choice(
       $.pipeline,
+      $.union_statement,
       $.insert_statement,
+      $.upsert_statement,
       $.table_statement,
+    ),
+
+    // from ... | union [all] from ... (combine result sets, chainable).
+    union_statement: ($) => seq(
+      $.pipeline,
+      repeat1(seq(
+        $._separator,
+        "union",
+        optional("all"),
+        $._separator,
+        $.pipeline,
+      )),
     ),
 
     // A pipeline is a source table followed by zero or more steps,
@@ -48,6 +63,32 @@ export default grammar({
       $._separator,
       "insert",
       $.assignment_list,
+    ),
+
+    // into ... | upsert [...] | conflict [cols] | do update [...]
+    upsert_statement: ($) => seq(
+      "into",
+      $.identifier,
+      $._separator,
+      "upsert",
+      $.assignment_list,
+      optional(seq(
+        $._separator,
+        "conflict",
+        $.identifier_list,
+        optional(seq(
+          $._separator,
+          "do",
+          "update",
+          $.assignment_list,
+        )),
+      )),
+    ),
+
+    identifier_list: ($) => seq(
+      "[",
+      commaSep($.identifier),
+      "]",
     ),
 
     table_statement: ($) => seq(
@@ -110,9 +151,9 @@ export default grammar({
 
     derive_step: ($) => seq("derive", $.assignment_list),
 
-    update_step: ($) => seq("update", $.assignment_list),
+    update_step: ($) => seq("update", optional("all"), $.assignment_list),
 
-    delete_step: ($) => "delete",
+    delete_step: ($) => seq("delete", optional("all")),
 
     assignment_list: ($) => seq(
       "[",

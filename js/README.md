@@ -77,7 +77,7 @@ cargo install pipeql-cli          # CLI tool
 ```toml
 # Cargo.toml
 [dependencies]
-pipeql-core = "1.1.5"
+pipeql-core = "1.1.6"
 ```
 
 ### JavaScript / TypeScript
@@ -112,7 +112,7 @@ sudo cp target/release/libpipeql_cffi.dylib /usr/local/lib/
 go get github.com/Flaxmbot/PipeQL/go@latest
 
 #    Or pin a specific release:
-#    go get github.com/Flaxmbot/PipeQL/go@v1.1.5
+#    go get github.com/Flaxmbot/PipeQL/go@v1.1.6
 ```
 
 > If you see `go.mod file not found` you are outside a Go module — run `go mod init <yourmodule>` first, or run the `go get` from a project that already has a `go.mod`.
@@ -381,6 +381,12 @@ const { lastId, changes } = await db.execute('into notes | insert [title = $titl
 const newNote = await db.insertAndFetch('into notes | insert $data', req.body);
 ```
 
+> ⚠️ A `$param` that you forget to supply in the params object raises a clear
+> error (`missing value for parameter '$role'`) instead of silently binding the
+> parameter's name — a typo can never quietly return wrong data. `union`
+> queries return rows just like `select`; only mutations and DDL dispatch to
+> `.run()`/`execute()`.
+
 ### Python
 
 ```python
@@ -443,6 +449,34 @@ pipeql parse "from users | select [id, name]"
 pipeql dialects
 pipeql version
 ```
+
+### Optional: Fluent builder (programmatic composition)
+
+The **string DSL above is PipeQL's primary interface.** For composing queries in
+code — conditional or looped pipeline stages, or object-style inserts — the SDK
+also ships an **optional fluent builder**. A builder query and a hand-written
+string query are *provably identical*: the builder assembles the exact same
+source string and hands it to the same compiler.
+
+```javascript
+import { PipeQL } from '@flaxmbot/pipeql/builder';
+
+const q = PipeQL.from('notes')
+  .filter('is_archived == 0')
+  .sort(['created_at desc'])
+  .take(10);
+const { sql, params } = await q.compile('sqlite');
+
+// Object inserts auto-generate $b0, $b1, ... bind params
+const ins = PipeQL.into('notes').insert({ title: 'Hi', flag: 1 });
+// source: "into notes | insert [title = $b0, flag = $b1]"  values: { b0: 'Hi', b1: 1 }
+```
+
+The builder duck-types through the driver too: `db.query(q)` and
+`db.execute(q)` both accept a `PipeQL` instance, and builder values merge with
+your params automatically. The same builder API ships in all 5 SDKs (Rust,
+Python, Go, C) — see the [main README](../README.md) and the
+[docs site](https://pipeql.vercel.app).
 
 ---
 

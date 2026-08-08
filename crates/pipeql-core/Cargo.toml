@@ -9,7 +9,6 @@ keywords = ["sql", "query", "compiler", "postgres", "sqlite"]
 categories = ["database", "compilers", "parser-implementations"]
 
 [dependencies]
-thiserror.workspace = true
 serde = { version = "1", features = ["derive"], optional = true }
 
 [features]

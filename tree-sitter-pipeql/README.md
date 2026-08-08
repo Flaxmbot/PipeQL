@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Flaxmbot/PipeQL/master/logo.png" alt="PipeQL Logo" width="220" />
+</p>
+
 # tree-sitter-pipeql
+
+<p align="center">
+  <a href="https://github.com/Flaxmbot/PipeQL/actions"><img src="https://img.shields.io/github/actions/workflow/status/Flaxmbot/PipeQL/ci.yml?style=flat-square&logo=github&label=CI" alt="CI" /></a>
+  <a href="https://www.npmjs.com/package/tree-sitter-pipeql"><img src="https://img.shields.io/npm/v/tree-sitter-pipeql?style=flat-square&logo=npm&logoColor=white&color=38bdf8" alt="npm" /></a>
+  <a href="https://github.com/Flaxmbot/PipeQL/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-c084fc?style=flat-square" alt="License" /></a>
+</p>
 
 A [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) grammar for
 **PipeQL** — the pipelined, injection-safe, polyglot query language.

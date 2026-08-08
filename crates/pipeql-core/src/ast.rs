@@ -46,8 +46,20 @@ impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Literal::Integer(v) => write!(f, "{v}"),
-            Literal::Float(v) => write!(f, "{v}"),
-            Literal::String(v) => write!(f, "'{v}'"),
+            Literal::Float(v) => {
+                // Avoid scientific notation (e.g. 1e20) which is invalid SQL.
+                let s = format!("{v}");
+                if s.contains('e') || s.contains('E') {
+                    // Use fixed-point notation with enough precision
+                    write!(f, "{v:.15}")
+                } else {
+                    write!(f, "{v}")
+                }
+            }
+            Literal::String(v) => {
+                let escaped = v.replace('\'', "''");
+                write!(f, "'{escaped}'")
+            }
             Literal::Bool(v) => write!(f, "{v}"),
             Literal::Null => write!(f, "NULL"),
         }
@@ -353,9 +365,15 @@ pub enum PipelineStep {
     },
     Update {
         assignments: Vec<Assignment>,
+        /// `update all` — explicit opt-in for a full-table update that bypasses
+        /// the filter guard (documented escape hatch).
+        all: bool,
         span: Span,
     },
     Delete {
+        /// `delete all` — explicit opt-in for a full-table delete that bypasses
+        /// the filter guard (documented escape hatch).
+        all: bool,
         span: Span,
     },
 }

@@ -194,6 +194,11 @@
     }
   },
   {
+    "type": "delete_step",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "derive_step",
     "named": true,
     "fields": {},
@@ -286,6 +291,21 @@
       "types": [
         {
           "type": "group_spec",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "identifier_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
           "named": true
         }
       ]
@@ -659,6 +679,14 @@
         {
           "type": "table_statement",
           "named": true
+        },
+        {
+          "type": "union_statement",
+          "named": true
+        },
+        {
+          "type": "upsert_statement",
+          "named": true
         }
       ]
     }
@@ -769,6 +797,21 @@
     }
   },
   {
+    "type": "union_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "pipeline",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "update_step",
     "named": true,
     "fields": {},
@@ -778,6 +821,29 @@
       "types": [
         {
           "type": "assignment_list",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "upsert_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "assignment_list",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "identifier_list",
           "named": true
         }
       ]
@@ -880,6 +946,10 @@
     "named": false
   },
   {
+    "type": "all",
+    "named": false
+  },
+  {
     "type": "and",
     "named": false
   },
@@ -904,6 +974,10 @@
     "named": false
   },
   {
+    "type": "conflict",
+    "named": false
+  },
+  {
     "type": "datetime",
     "named": false
   },
@@ -912,8 +986,8 @@
     "named": false
   },
   {
-    "type": "delete_step",
-    "named": true
+    "type": "delete",
+    "named": false
   },
   {
     "type": "derive",
@@ -921,6 +995,10 @@
   },
   {
     "type": "desc",
+    "named": false
+  },
+  {
+    "type": "do",
     "named": false
   },
   {
@@ -1056,11 +1134,19 @@
     "named": false
   },
   {
+    "type": "union",
+    "named": false
+  },
+  {
     "type": "unique",
     "named": false
   },
   {
     "type": "update",
+    "named": false
+  },
+  {
+    "type": "upsert",
     "named": false
   },
   {

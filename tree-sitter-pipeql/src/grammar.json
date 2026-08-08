@@ -11,11 +11,64 @@
         },
         {
           "type": "SYMBOL",
+          "name": "union_statement"
+        },
+        {
+          "type": "SYMBOL",
           "name": "insert_statement"
         },
         {
           "type": "SYMBOL",
+          "name": "upsert_statement"
+        },
+        {
+          "type": "SYMBOL",
           "name": "table_statement"
+        }
+      ]
+    },
+    "union_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "pipeline"
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_separator"
+              },
+              {
+                "type": "STRING",
+                "value": "union"
+              },
+              {
+                "type": "CHOICE",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": "all"
+                  },
+                  {
+                    "type": "BLANK"
+                  }
+                ]
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_separator"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "pipeline"
+              }
+            ]
+          }
         }
       ]
     },
@@ -143,6 +196,131 @@
         {
           "type": "SYMBOL",
           "name": "assignment_list"
+        }
+      ]
+    },
+    "upsert_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "into"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_separator"
+        },
+        {
+          "type": "STRING",
+          "value": "upsert"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "assignment_list"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "_separator"
+                },
+                {
+                  "type": "STRING",
+                  "value": "conflict"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "identifier_list"
+                },
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "_separator"
+                        },
+                        {
+                          "type": "STRING",
+                          "value": "do"
+                        },
+                        {
+                          "type": "STRING",
+                          "value": "update"
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "assignment_list"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "BLANK"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "identifier_list": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "["
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "identifier"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            },
+            {
+              "type": "REPEAT",
+              "content": {
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": ","
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "]"
         }
       ]
     },
@@ -476,14 +654,43 @@
           "value": "update"
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "all"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "SYMBOL",
           "name": "assignment_list"
         }
       ]
     },
     "delete_step": {
-      "type": "STRING",
-      "value": "delete"
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "delete"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "all"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
     },
     "assignment_list": {
       "type": "SEQ",
@@ -1546,6 +1753,10 @@
     [
       "pipeline",
       "_separator"
+    ],
+    [
+      "pipeline",
+      "pipeline"
     ]
   ],
   "precedences": [],

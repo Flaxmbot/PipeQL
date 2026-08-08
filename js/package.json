@@ -1,6 +1,6 @@
 {
   "name": "@flaxmbot/pipeql",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "JavaScript/TypeScript SDK for PipeQL - pipelined & injection-safe polyglot query language",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,10 @@
     "./driver": {
       "types": "./src/driver.d.ts",
       "import": "./src/driver.js"
+    },
+    "./builder": {
+      "types": "./src/builder.d.ts",
+      "import": "./src/builder.js"
     }
   },
   "files": [
@@ -24,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node test/smoke.mjs && node test/driver-smoke.mjs"
+    "test": "node test/smoke.mjs && node test/builder-smoke.mjs && node test/driver-smoke.mjs"
   },
   "keywords": [
     "sql",

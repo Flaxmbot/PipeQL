@@ -26,7 +26,9 @@ export type StatementType =
   | "insert"
   | "update"
   | "delete"
-  | "create_table";
+  | "create_table"
+  | "upsert"
+  | "union";
 
 export interface ParamMeta {
   name: string;

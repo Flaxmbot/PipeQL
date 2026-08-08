@@ -33,6 +33,13 @@ export interface DriverOptions {
     driver?: DriverKind;
 }
 export type ParamValues = Record<string, unknown>;
+/** A PipeQL source: a raw string or a builder object exposing `source()`. */
+export type QuerySource = string | QueryBuilderLike;
+/** Minimal duck-typed builder shape accepted by driver methods. */
+export interface QueryBuilderLike {
+    source(): string;
+    values?: ParamValues;
+}
 /** Result shape for mutations: affected-row metadata plus an empty rows array. */
 export type RunResult = {
     lastId?: unknown;
@@ -56,16 +63,26 @@ export declare class PipeqlDriver {
     private readonly cache;
     private readonly mysqlPromise;
     constructor(conn: unknown, options?: DriverOptions);
+    /** Resolve a builder object (duck-typed) or a raw source string. */
+    private sourceOf;
     /**
-     * Resolve `$data` object expansion. When the source references `$data`, the
-     * data object's keys are expanded into explicit column assignments and its
-     * values become bound params. `wholeObjectAsData` treats the entire params
-     * object as the data object (used by `insertAndFetch`).
+     * Resolve builders, then `$data` object expansion. When the source
+     * references `$data`, the data object's keys are expanded into explicit
+     * column assignments and its values become bound params.
+     * `wholeObjectAsData` treats the entire params object as the data object
+     * (used by `insertAndFetch`).
      */
     private prepare;
     /** Compile (cached per source) to the driver dialect. */
     private compiled;
-    /** Map named PipeQL params to positional driver args (literals bind as themselves). */
+    /**
+     * Map named PipeQL params to positional driver args.
+     *
+     * Literal-derived params (a concrete type in the analysis param map, or a
+     * select-mode string literal with no param-map entry) bind as themselves.
+     * A user `$param` (type `Any`) missing from the values object is a bug —
+     * fail loudly instead of silently binding its name and returning wrong data.
+     */
     private bind;
     /** Run a row-returning statement (SELECT or `... RETURNING *`) and fetch rows. */
     private runQuery;
@@ -74,19 +91,19 @@ export declare class PipeqlDriver {
      * Compile source and bind params. Returns the compiler result plus the
      * positional `args` array ready for the native driver.
      */
-    compile(source: string, params?: ParamValues): Promise<CompileResult & {
+    compile(source: QuerySource, params?: ParamValues): Promise<CompileResult & {
         args: unknown[];
     }>;
     /**
      * Run any statement, auto-dispatching `.all()` vs `.run()`. Returns rows for
      * selects; mutations return `{ lastId, changes, rows: [] }`.
      */
-    query<T = unknown>(source: string, params?: ParamValues): Promise<QueryReturn<T>>;
+    query<T = unknown>(source: QuerySource, params?: ParamValues): Promise<QueryReturn<T>>;
     /**
      * Run a statement and return its execution result: mutations return
      * `{ lastId, changes, rows: [] }`, selects return `{ rows }`.
      */
-    execute(source: string, params?: ParamValues): Promise<RunResult | {
+    execute(source: QuerySource, params?: ParamValues): Promise<RunResult | {
         rows: unknown[];
     }>;
     /**
@@ -99,7 +116,7 @@ export declare class PipeqlDriver {
      * const note = await db.insertAndFetch("into notes | insert $data", req.body);
      * ```
      */
-    insertAndFetch<T = Record<string, unknown>>(source: string, params?: ParamValues): Promise<FetchReturn<T>>;
+    insertAndFetch<T = Record<string, unknown>>(source: QuerySource, params?: ParamValues): Promise<FetchReturn<T>>;
     /**
      * Single-call update + return. Updates matching rows and returns the updated
      * row(s) via `RETURNING *` (sqlite, postgres, duckdb). On mysql2 falls back
@@ -110,7 +127,7 @@ export declare class PipeqlDriver {
      *   "from notes | filter id == $id | update $data", { id, data: req.body });
      * ```
      */
-    updateAndFetch<T = Record<string, unknown>>(source: string, params?: ParamValues): Promise<FetchReturn<T>>;
+    updateAndFetch<T = Record<string, unknown>>(source: QuerySource, params?: ParamValues): Promise<FetchReturn<T>>;
     /**
      * Tagged template: interpolated values become named bind params (never
      * inlined SQL). Dispatches like {@link query}.

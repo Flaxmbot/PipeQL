@@ -78,7 +78,68 @@ int main(void) {
     failures += check("NULL source returns NULL", nullsrc == NULL);
     pipeql_error_clear(&err4);
 
-    /* 5. Version. */
+    /* 5. Fluent query builder. */
+    PipeqlError err5 = {0};
+    PipeqlQuery* q = pipeql_query_from("notes");
+    q = pipeql_query_filter(q, "is_archived == 0");
+    q = pipeql_query_sort(q, "created_at desc");
+    q = pipeql_query_take(q, 10);
+    char* src = pipeql_query_source(q);
+    failures += check("builder source",
+                      src != NULL && strcmp(src, "from notes | filter is_archived == 0 | sort [created_at desc] | take 10") == 0);
+    printf("--- builder source ---\n%s\n", src ? src : "(null)");
+    pipeql_string_free(src);
+
+    PipeqlResult* built = pipeql_query_compile(q, "postgres", &err5);
+    failures += check("builder compiles", built != NULL);
+    if (built) {
+        failures += check("builder sql has WHERE", strstr(built->sql, "WHERE") != NULL);
+        pipeql_result_free(built);
+    } else {
+        fprintf(stderr, "builder compile failed: %s\n", err5.message);
+        pipeql_error_clear(&err5);
+    }
+    pipeql_query_free(q);
+
+    /* 5b. Builder upsert chain. */
+    PipeqlError err5b = {0};
+    PipeqlQuery* uq = pipeql_query_into("users");
+    uq = pipeql_query_upsert(uq, "id = $id, name = $name");
+    uq = pipeql_query_conflict(uq, "id");
+    uq = pipeql_query_do_update(uq, "name = $name");
+    PipeqlResult* ures = pipeql_query_compile(uq, "postgres", &err5b);
+    failures += check("builder upsert compiles", ures != NULL);
+    if (ures) {
+        failures += check("builder upsert statement type",
+                          ures->statement_type != NULL && strcmp(ures->statement_type, "upsert") == 0);
+        pipeql_result_free(ures);
+    } else {
+        fprintf(stderr, "builder upsert failed: %s\n", err5b.message);
+        pipeql_error_clear(&err5b);
+    }
+    pipeql_query_free(uq);
+
+    /* 5c. NULL string args: explicit signal, never a silent empty fragment. */
+    failures += check("query_from(NULL) is NULL", pipeql_query_from(NULL) == NULL);
+    failures += check("query_into(NULL) is NULL", pipeql_query_into(NULL) == NULL);
+    failures += check("query_raw(NULL) is NULL", pipeql_query_raw(NULL) == NULL);
+
+    PipeqlQuery* nq = pipeql_query_from("notes");
+    failures += check("query_filter(NULL expr) is NULL", pipeql_query_filter(nq, NULL) == NULL);
+    failures += check("query_select(NULL cols) is NULL", pipeql_query_select(nq, NULL) == NULL);
+    failures += check("query_join(NULL table) is NULL", pipeql_query_join(nq, NULL, "a.id = b.id") == NULL);
+    failures += check("query_join(NULL on) is NULL", pipeql_query_join(nq, "tags", NULL) == NULL);
+    failures += check("query_group(NULL aggs) is NULL", pipeql_query_group(nq, "category", NULL) == NULL);
+    failures += check("query_update(NULL) is NULL", pipeql_query_update(nq, NULL) == NULL);
+
+    /* The builder must survive untouched and still be owned by us. */
+    char* nsrc = pipeql_query_source(nq);
+    failures += check("builder untouched after NULL stages",
+                      nsrc != NULL && strcmp(nsrc, "from notes") == 0);
+    pipeql_string_free(nsrc);
+    pipeql_query_free(nq);
+
+    /* 6. Version. */
     const char* v = pipeql_version();
     failures += check("version non-empty", v != NULL && strlen(v) > 0);
     printf("pipeql version: %s\n", v);

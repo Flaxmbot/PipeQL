@@ -59,6 +59,14 @@ export const SAMPLE_QUERIES = {
     title: "Delete",
     pipeql: `from notes\n| filter id == $id\n| delete`
   },
+  update_all: {
+    title: "Update All",
+    pipeql: `from users\n| update all [\n  plan = 'free',\n  updated_at = current_timestamp\n]`
+  },
+  delete_all: {
+    title: "Delete All",
+    pipeql: `from users\n| delete all`
+  },
   upsert: {
     title: "Upsert",
     pipeql: `into users\n| upsert [\n  name = $name,\n  email = $email\n]\n| conflict [email]\n| do update [\n  name = $name\n]`

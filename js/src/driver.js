@@ -89,18 +89,28 @@ export class PipeqlDriver {
                 ? conn.promise()
                 : null;
     }
+    /** Resolve a builder object (duck-typed) or a raw source string. */
+    sourceOf(source) {
+        if (typeof source === "string")
+            return source;
+        return source.source();
+    }
     /**
-     * Resolve `$data` object expansion. When the source references `$data`, the
-     * data object's keys are expanded into explicit column assignments and its
-     * values become bound params. `wholeObjectAsData` treats the entire params
-     * object as the data object (used by `insertAndFetch`).
+     * Resolve builders, then `$data` object expansion. When the source
+     * references `$data`, the data object's keys are expanded into explicit
+     * column assignments and its values become bound params.
+     * `wholeObjectAsData` treats the entire params object as the data object
+     * (used by `insertAndFetch`).
      */
     prepare(source, params, wholeObjectAsData = false) {
-        if (!DATA_TOKEN.test(source))
-            return { source, params: params ?? {} };
-        const data = wholeObjectAsData ? (params?.data ?? params) : params?.data;
-        const { source: expanded, values } = expandData(source, data);
-        return { source: expanded, params: { ...(params ?? {}), ...values } };
+        const builderValues = typeof source === "object" && source.values ? source.values : undefined;
+        const src = this.sourceOf(source);
+        const merged = { ...(params ?? {}), ...(builderValues ?? {}) };
+        if (!DATA_TOKEN.test(src))
+            return { source: src, params: merged };
+        const data = wholeObjectAsData ? (merged.data ?? merged) : merged.data;
+        const { source: expanded, values } = expandData(src, data);
+        return { source: expanded, params: { ...merged, ...values } };
     }
     /** Compile (cached per source) to the driver dialect. */
     async compiled(source) {
@@ -112,9 +122,28 @@ export class PipeqlDriver {
         }
         return hit;
     }
-    /** Map named PipeQL params to positional driver args (literals bind as themselves). */
+    /**
+     * Map named PipeQL params to positional driver args.
+     *
+     * Literal-derived params (a concrete type in the analysis param map, or a
+     * select-mode string literal with no param-map entry) bind as themselves.
+     * A user `$param` (type `Any`) missing from the values object is a bug —
+     * fail loudly instead of silently binding its name and returning wrong data.
+     */
     bind(compiled, params) {
-        return compiled.params.map((name) => params != null && name in params ? params[name] : name);
+        const types = new Map((compiled.analysis?.param_map ?? []).map((p) => [p.name, p.ty]));
+        const has = (params, name) => Object.prototype.hasOwnProperty.call(params, name);
+        return compiled.params.map((name) => {
+            // hasOwnProperty, not `in` — a plain object's prototype chain includes
+            // names like "constructor"/"toString" that must never bind by accident.
+            if (params != null && has(params, name))
+                return params[name];
+            if (types.get(name) === "Any") {
+                throw new Error(`[pipeql] missing value for parameter '${name}' — pass it in the params object (e.g. { ${name}: ... })`);
+            }
+            // Literal-derived param: the value is the name itself.
+            return name;
+        });
     }
     /** Run a row-returning statement (SELECT or `... RETURNING *`) and fetch rows. */
     async runQuery(sql, args) {
@@ -143,7 +172,10 @@ export class PipeqlDriver {
         }
     }
     async runRaw(compiled, args) {
-        const isQuery = compiled.statementType === "select";
+        // select AND union return rows; mutations and DDL go through .run().
+        // Keying off `statementType === "select"` dropped rows from `union`
+        // queries, which are read-only but not "select" typed.
+        const isQuery = compiled.statementType === "select" || compiled.statementType === "union";
         switch (this.driver) {
             case "better-sqlite3": {
                 const db = this.conn;
@@ -218,8 +250,10 @@ export class PipeqlDriver {
         const { source: src, params: p } = this.prepare(source, params);
         const compiled = await this.compiled(src);
         const raw = await this.runRaw(compiled, this.bind(compiled, p));
-        if (compiled.statementType === "select")
+        // select AND union are read-only — both must return rows.
+        if (compiled.statementType === "select" || compiled.statementType === "union") {
             return raw.rows;
+        }
         return { lastId: raw.lastId, changes: raw.changes, rows: [] };
     }
     /**
@@ -230,8 +264,9 @@ export class PipeqlDriver {
         const { source: src, params: p } = this.prepare(source, params);
         const compiled = await this.compiled(src);
         const raw = await this.runRaw(compiled, this.bind(compiled, p));
-        if (compiled.statementType === "select")
+        if (compiled.statementType === "select" || compiled.statementType === "union") {
             return { rows: raw.rows };
+        }
         return { lastId: raw.lastId, changes: raw.changes, rows: [] };
     }
     /**
